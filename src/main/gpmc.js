@@ -109,46 +109,71 @@ function hashFile(filePath, onFraction, signal) {
 }
 
 // Upload the file with fetch, streaming from disk and reporting bytes sent.
-// undici pulls from the ReadableStream as it writes to the socket, so counting
-// pulled chunks is accurate progress. The caller supplies the auth headers.
-async function streamUpload(url, filePath, headers, onProgress, signal) {
+// The Node stream is piped through a counting PassThrough and converted with
+// Readable.toWeb() — undici pulls from it with proper backpressure. (A
+// hand-rolled pull() waiting on 'readable' events races with the stream and
+// can deadlock mid-file; this way there is no manual event bookkeeping.)
+//
+// A watchdog aborts the request when no bytes have moved for `idleTimeoutMs`
+// (default 90s) so a stalled upload surfaces as a retryable transport error
+// instead of hanging a queue slot forever.
+async function streamUpload(url, filePath, headers, onProgress, signal, { idleTimeoutMs = 90000 } = {}) {
+  const { PassThrough, Readable } = require('stream');
   const stat = fs.statSync(filePath);
+  const total = stat.size;
   let sent = 0;
-  const stream = fs.createReadStream(filePath, { highWaterMark: 1024 * 1024 });
-  signal?.addEventListener('abort', () => stream.destroy(new Error('aborted')), { once: true });
-  const body = new ReadableStream({
-    pull(controller) {
-      return new Promise((resolve) => {
-        stream.once('readable', () => {
-          const chunk = stream.read();
-          if (chunk === null) {
-            if (!signal?.aborted) controller.close();
-            resolve();
-            return;
-          }
-          sent += chunk.length;
-          controller.enqueue(chunk);
-          onProgress?.(sent, stat.size);
-          resolve();
-        });
-      });
-    },
-    cancel() { stream.destroy(); },
+  let lastProgress = Date.now();
+
+  const source = fs.createReadStream(filePath, { highWaterMark: 256 * 1024 });
+  const counter = new PassThrough();
+  counter.on('data', (chunk) => {
+    sent += chunk.length;
+    lastProgress = Date.now();
+    onProgress?.(sent, total);
   });
-  let response;
+  source.on('error', (error) => counter.destroy(error));
+  const piped = source.pipe(counter);
+
+  // Abort both the streams and the fetch itself: if the server stops reading
+  // mid-body the stream destroy propagates, and if the body is fully sent but
+  // the response never arrives only aborting the fetch can break the wait.
+  const localAbort = new AbortController();
+  let stallError = null;
+  signal?.addEventListener('abort', () => localAbort.abort(), { once: true });
+
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastProgress > idleTimeoutMs) {
+      stallError = new GPMCError('transport',
+        `Upload stalled: no progress for ${Math.round(idleTimeoutMs / 1000)}s (sent ${sent}/${total} bytes).`);
+      localAbort.abort();
+      source.destroy(stallError);
+      counter.destroy(stallError);
+    }
+  }, Math.min(5000, Math.max(250, Math.floor(idleTimeoutMs / 4))));
+  watchdog.unref?.();
+
+  signal?.addEventListener('abort', () => {
+    source.destroy(new Error('aborted'));
+    counter.destroy();
+  }, { once: true });
+
+  const body = Readable.toWeb(piped);
   try {
-    response = await fetch(url, {
+    return await fetch(url, {
       method: 'PUT',
       headers,
       body,
       duplex: 'half',
-      signal,
+      signal: localAbort.signal,
     });
   } catch (error) {
-    if (signal?.aborted) throw new Error('aborted');
+    if (signal?.aborted) throw new Error('aborted'); // user cancellation wins
+    if (stallError) throw stallError;
+    if (error instanceof GPMCError) throw error;
     throw new GPMCError('transport', `Could not reach Google: ${error.message}`);
+  } finally {
+    clearInterval(watchdog);
   }
-  return response;
 }
 
 class GPMCClient {
@@ -341,4 +366,4 @@ class GPMCClient {
   }
 }
 
-module.exports = { GPMCClient, GPMCError, parseAuthData, authDataBody };
+module.exports = { GPMCClient, GPMCError, parseAuthData, authDataBody, streamUpload };

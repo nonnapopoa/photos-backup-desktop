@@ -11,9 +11,22 @@ const { app } = require('electron');
 
 const DEFAULT_SETTINGS = {
   folders: [],
-  quality: 'original', // 'original' | 'saver' (Storage Saver processing)
+  // Mirrors the iOS app's two independent toggles (Settings → Backup).
+  // Defaults match upstream UploadOptions: neither counts against quota nor
+  // asks for Storage Saver — uploads go up as Pixel XL originals.
+  storageSaver: false,
+  useQuota: false,
   autoStart: true,
 };
+
+function migrate(data) {
+  // Pre-0.2 single "quality" dropdown → upstream's two toggles.
+  if ('quality' in data) {
+    if (data.quality === 'saver') data.storageSaver = true;
+    delete data.quality;
+  }
+  return data;
+}
 
 function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
@@ -31,7 +44,7 @@ function signature(item) {
 class Settings {
   constructor() {
     try {
-      this.data = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) };
+      this.data = { ...DEFAULT_SETTINGS, ...migrate(JSON.parse(fs.readFileSync(settingsPath(), 'utf8'))) };
     } catch {
       this.data = { ...DEFAULT_SETTINGS };
     }

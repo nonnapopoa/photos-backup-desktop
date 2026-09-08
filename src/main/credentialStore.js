@@ -43,12 +43,16 @@ function writeEnvelope(json) {
   if (safeStorage.isEncryptionAvailable()) {
     try {
       const blob = safeStorage.encryptString(json).toString('base64');
+      // Round-trip check: if this process cannot read back what it wrote, the
+      // next launch cannot either — fall through to plaintext rather than
+      // storing a credential that forces a re-login.
+      safeStorage.decryptString(Buffer.from(blob, 'base64'));
       const envelope = JSON.stringify({ v: ENVELOPE_VERSION, mode: 'enc', data: blob });
       fs.writeFileSync(credentialPath(), envelope, { mode: 0o600 });
-      log(`saved mode=enc ${envelope.length}B`);
+      log(`saved mode=enc ${envelope.length}B (round-trip verified)`);
       return;
     } catch (error) {
-      log(`encryptString failed, falling back to plaintext: ${error.message}`);
+      log(`encryptString unusable, falling back to plaintext: ${error.message}`);
     }
   } else {
     log('save: encryption unavailable this run, storing plaintext');
@@ -61,24 +65,31 @@ function writeEnvelope(json) {
 function readEnvelope() {
   const raw = fs.readFileSync(credentialPath(), 'utf8');
 
-  // New-format envelope.
-  try {
-    const envelope = JSON.parse(raw);
-    if (envelope && envelope.v === ENVELOPE_VERSION && typeof envelope.data === 'string') {
-      if (envelope.mode === 'enc') {
-        const json = safeStorage.decryptString(Buffer.from(envelope.data, 'base64'));
-        const credential = JSON.parse(json);
+  // New-format envelope. Failures inside it do NOT fall through to the legacy
+  // readers below — a v1 envelope re-parsed as plaintext would just yield the
+  // wrapper object, not a credential.
+  let envelope = null;
+  try { envelope = JSON.parse(raw); } catch { /* not JSON at all */ }
+  if (envelope && envelope.v === ENVELOPE_VERSION && typeof envelope.data === 'string') {
+    if (envelope.mode === 'enc') {
+      try {
+        const credential = JSON.parse(safeStorage.decryptString(Buffer.from(envelope.data, 'base64')));
         log('loaded mode=enc');
         return credential;
+      } catch (error) {
+        throw new LoadFailure('decryption failed', error.message);
       }
-      if (envelope.mode === 'plain') {
+    }
+    if (envelope.mode === 'plain') {
+      try {
         const credential = JSON.parse(envelope.data);
         log('loaded mode=plain');
         return credential;
+      } catch (error) {
+        throw new LoadFailure('record is corrupt', error.message);
       }
     }
-  } catch (error) {
-    log(`envelope read failed: ${error.message}`);
+    throw new LoadFailure('unknown envelope mode', String(envelope.mode));
   }
 
   // Old format (pre-envelope): raw encrypted base64 or raw plaintext JSON.
@@ -92,8 +103,10 @@ function readEnvelope() {
   }
   try {
     const credential = JSON.parse(raw);
-    log('loaded legacy mode=plain');
-    return credential;
+    if (credential && credential.authData) {
+      log('loaded legacy mode=plain');
+      return credential;
+    }
   } catch (error) {
     log(`legacy plain parse failed: ${error.message}`);
   }

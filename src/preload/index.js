@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('photosBackup', {
   retryFailed: () => ipcRenderer.invoke('queue-retry-failed'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   on: (channel, listener) => {
-    const allowed = ['account-state', 'settings', 'queue-snapshot', 'scan-started', 'scan-finished', 'account-warning'];
+    const allowed = ['account-state', 'settings', 'queue-snapshot', 'scan-started', 'scan-finished', 'batch-started', 'account-warning'];
     if (!allowed.includes(channel)) return () => {};
     const wrapped = (_event, payload) => listener(payload);
     ipcRenderer.on(channel, wrapped);

@@ -21,13 +21,18 @@ the iOS Photos library replaced by folders you choose.
 | BGProcessingTask background windows | Desktop queue with pause/resume/cancel and per-account skip memory |
 | SwiftUI views | Plain HTML/CSS/JS renderer |
 
-Uploads run oldest-first at concurrency 2, SHA-1 hash each file, ask Google whether
-the hash already exists (skipping it if so), then open a resumable upload session,
-stream the bytes with progress, and commit with capture-date metadata. Transient
-failures (408/429/5xx, network) retry up to 3 times with backoff. Files already
-recorded as completed for an account are skipped on later runs without re-hashing.
+Uploads follow the iOS app's exact scheduling technique: oldest-first batches of
+at most 250 items per activation (the next batch starts automatically once the
+queue drains), concurrency 2, SHA-1 hash dedup against Google's side before any
+bytes move, resumable upload sessions, and the upstream retry schedule
+(`min(30, 2^attempt)`, 3 attempts). A rejected credential requeues everything
+and halts the queue until the account is reconnected. On HTTP 429 (per-minute
+quota) the queue additionally pauses new item starts for a minute so one quota
+window cannot burn the retry budget of every queued item.
 
-Quality options match the iOS app: **Original** or **Storage Saver** processing.
+Two toggles mirror the iOS app's Settings → Backup, with the same defaults:
+**Storage Saver** (off) and **Count against storage quota** (off — uploads go
+up as Pixel XL originals that do not consume your Google storage).
 
 ## Requirements
 
@@ -47,8 +52,10 @@ If npm blocks Electron's postinstall binary download, allow it and reinstall, or
 ## Run the tests
 
 ```bash
-node test/upload-flow-test.js   # full upload pipeline against a mock Google server
-npx electron test/signin-smoke.js   # real EmbeddedSetup page: sign-in form vs. "not secure" block
+node test/upload-flow-test.js        # full upload pipeline against a mock Google server
+node test/stream-upload-test.js      # backpressured streaming PUT + stall watchdog
+node test/queue-test.js              # batches, backoff, 429 cooldown, credential halt
+npx electron test/signin-smoke.js    # real EmbeddedSetup page: sign-in form vs. "not secure" block
 SMOKE_DEVTOOLS=1 npx electron test/signin-smoke.js   # same, with devtools attached
 ```
 

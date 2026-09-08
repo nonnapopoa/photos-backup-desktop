@@ -56,13 +56,10 @@
       <div class="card">
         <div class="card-head">
           <h2>Backup</h2>
-          <label class="quality">
-            Quality
-            <select id="qualitySelect">
-              <option value="original">Original</option>
-              <option value="saver">Storage Saver</option>
-            </select>
-          </label>
+          <div class="toggles">
+            <label class="toggle"><input type="checkbox" id="storageSaverToggle"> Storage Saver</label>
+            <label class="toggle"><input type="checkbox" id="useQuotaToggle"> Count against storage quota</label>
+          </div>
         </div>
         <div class="actions">
           <button id="backupButton" class="primary">Back up now</button>

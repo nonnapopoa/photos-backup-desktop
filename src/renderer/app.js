@@ -17,7 +17,8 @@ const els = {
   pauseButton: document.getElementById('pauseButton'),
   cancelButton: document.getElementById('cancelButton'),
   retryButton: document.getElementById('retryButton'),
-  qualitySelect: document.getElementById('qualitySelect'),
+  storageSaverToggle: document.getElementById('storageSaverToggle'),
+  useQuotaToggle: document.getElementById('useQuotaToggle'),
   summary: document.getElementById('summary'),
   scanNote: document.getElementById('scanNote'),
   uploadList: document.getElementById('uploadList'),
@@ -28,13 +29,15 @@ const els = {
 
 const state = {
   account: { status: 'disconnected' },
-  settings: { folders: [], quality: 'original' },
+  settings: { folders: [], storageSaver: false, useQuota: false },
   snapshot: null,
   filter: 'all',
+  remaining: 0,
 };
 
 const STATUS_LABELS = {
   waiting: 'Waiting',
+  exporting: 'Preparing',
   hashing: 'Hashing',
   checkingDuplicate: 'Checking duplicates',
   preparing: 'Preparing',
@@ -88,21 +91,35 @@ function render() {
     els.folderList.append(li);
   }
 
-  els.qualitySelect.value = state.settings.quality || 'original';
+  els.storageSaverToggle.checked = !!state.settings.storageSaver;
+  els.useQuotaToggle.checked = !!state.settings.useQuota;
 
   // Queue controls
   const snapshot = state.snapshot;
   const counts = snapshot?.counts;
-  const hasActive = !!counts && counts.active > 0;
+  const hasActive = !!counts && (counts.active > 0 || counts.waiting > 0);
   const hasFailed = !!counts && counts.failed > 0;
   const paused = !!snapshot?.paused;
+  const halted = !!snapshot?.halted;
+  const cooling = !!snapshot && snapshot.cooldownRemainingMs > 0;
   els.backupButton.disabled = hasActive;
   els.pauseButton.disabled = !hasActive || paused;
-  els.cancelButton.disabled = !hasActive && !(counts && (counts.waiting > 0 || paused));
-  els.retryButton.disabled = !hasFailed;
+  els.cancelButton.disabled = !hasActive && !(counts && counts.waiting > 0);
+  els.retryButton.disabled = !hasFailed && !halted;
   els.pauseButton.textContent = paused ? 'Resume' : 'Pause';
 
-  // Summary chips
+  // Batch / halt / cooldown notes
+  if (halted) {
+    showNote(`Stopped: ${snapshot.halted} — check the account in Settings, then press Retry failed.`);
+  } else if (cooling) {
+    showNote(`${snapshot.cooldownReason} (resuming in ${Math.ceil(snapshot.cooldownRemainingMs / 1000)}s).`);
+  } else if (state.remaining > 0 && counts && counts.active === 0 && counts.waiting === 0) {
+    showNote(`${state.remaining} more file${state.remaining === 1 ? '' : 's'} waiting — the next batch starts automatically.`);
+  } else if (state.remaining > 0) {
+    showNote(`${state.remaining} more file${state.remaining === 1 ? '' : 's'} will follow in batches of 250.`);
+  }
+
+  // Summary chips — cancelled included so the numbers always add up.
   els.summary.innerHTML = '';
   if (counts) {
     const defs = [
@@ -112,8 +129,10 @@ function render() {
       ['Already backed up', counts.alreadyBackedUp],
       ['Waiting', counts.waiting],
       ['Failed', counts.failed],
+      ['Cancelled', counts.cancelled],
     ];
     for (const [label, value] of defs) {
+      if (label === 'Cancelled' && value === 0) continue;
       const chip = document.createElement('span');
       chip.className = 'chip';
       chip.textContent = `${value} ${label.toLowerCase()}`;
@@ -131,6 +150,19 @@ function render() {
   els.uploadList.innerHTML = '';
   for (const item of filtered.slice(0, 400)) {
     els.uploadList.append(renderItem(item));
+  }
+}
+
+function showNote(text, sticky = false) {
+  els.scanNote.textContent = text;
+  els.scanNote.classList.remove('hidden');
+  if (!sticky) {
+    clearTimeout(showNote.timer);
+    showNote.timer = setTimeout(() => {
+      if (els.scanNote.dataset.sticky !== '1') els.scanNote.classList.add('hidden');
+    }, 12000);
+  } else {
+    els.scanNote.dataset.sticky = '1';
   }
 }
 
@@ -211,14 +243,11 @@ window.photosBackup.on('account-warning', (message) => {
   els.warningBanner.classList.remove('hidden');
 });
 window.photosBackup.on('queue-snapshot', (snapshot) => { state.snapshot = snapshot; render(); });
-window.photosBackup.on('scan-started', () => {
-  els.scanNote.textContent = 'Scanning folders…';
-  els.scanNote.classList.remove('hidden');
-});
-window.photosBackup.on('scan-finished', ({ count }) => {
-  els.scanNote.textContent = `Found ${count} media file${count === 1 ? '' : 's'}.`;
-  els.scanNote.classList.remove('hidden');
-  setTimeout(() => els.scanNote.classList.add('hidden'), 6000);
+window.photosBackup.on('scan-started', () => showNote('Scanning folders…', true));
+window.photosBackup.on('scan-finished', ({ count }) => showNote(`Found ${count} media file${count === 1 ? '' : 's'}.`));
+window.photosBackup.on('batch-started', ({ queued, remaining }) => {
+  state.remaining = remaining;
+  showNote(`Next batch: ${queued} file${queued === 1 ? '' : 's'} queued${remaining > 0 ? ` (${remaining} more to follow)` : ''}.`);
 });
 
 // Wire controls
@@ -244,17 +273,32 @@ els.addFolderButton.onclick = async () => {
   render();
 };
 
-els.backupButton.onclick = () => window.photosBackup.runBackup();
+els.backupButton.onclick = async () => {
+  const result = await window.photosBackup.runBackup();
+  if (result?.error) showNote(`Could not start: ${result.error === 'no-folders' ? 'add a folder first.' : 'connect an account first.'}`, true);
+  else if (result) {
+    state.remaining = result.remaining || 0;
+    showNote(result.queued > 0
+      ? `Queued ${result.queued} of ${result.found} file${result.found === 1 ? '' : 's'}${state.remaining > 0 ? ` — ${state.remaining} more will follow in batches of 250` : ''}.`
+      : 'Everything in these folders is already backed up.', true);
+  }
+  render();
+};
 els.pauseButton.onclick = () => (state.snapshot?.paused ? window.photosBackup.resume() : window.photosBackup.pause());
 els.cancelButton.onclick = () => window.photosBackup.cancelAll();
 els.retryButton.onclick = () => window.photosBackup.retryFailed();
 els.disconnectButton.onclick = async () => {
   await window.photosBackup.disconnectAccount();
   state.snapshot = null;
+  state.remaining = 0;
 };
 
-els.qualitySelect.onchange = async () => {
-  state.settings = await window.photosBackup.updateSettings({ quality: els.qualitySelect.value });
+els.storageSaverToggle.onchange = async () => {
+  state.settings = await window.photosBackup.updateSettings({ storageSaver: els.storageSaverToggle.checked });
+  render();
+};
+els.useQuotaToggle.onchange = async () => {
+  state.settings = await window.photosBackup.updateSettings({ useQuota: els.useQuotaToggle.checked });
   render();
 };
 
