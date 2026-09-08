@@ -1,0 +1,47 @@
+{
+  "name": "photos-backup-desktop",
+  "productName": "Photos Backup",
+  "version": "0.1.0",
+  "description": "Back up folders of photos and videos to Google Photos (desktop port of the PhotosBackup iOS app)",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "author": "g8row",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.g8row.photosbackup.desktop",
+    "productName": "Photos Backup",
+    "files": [
+      "src/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Utility"
+    }
+  }
+}

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:;">
+  <title>Photos Backup</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <h1>Photos Backup</h1>
+        <p class="tagline">Desktop backup to Google Photos</p>
+      </div>
+    </div>
+    <div id="accountBadge" class="badge hidden"></div>
+  </header>
+
+  <main id="main">
+    <!-- Onboarding: shown until an account is connected -->
+    <section id="onboarding" class="card onboarding hidden">
+      <h2>Back up your photos to Google Photos</h2>
+      <p>
+        Connect a Google account, choose the folders to back up, and the app uploads
+        each photo and video in original quality (or Storage Saver). Items already in
+        Google Photos are skipped automatically.
+      </p>
+      <ol class="steps">
+        <li>Sign in with Google in a private window — the token never leaves this machine.</li>
+        <li>Pick the folders that hold your library.</li>
+        <li>Press <strong>Back up now</strong>. That's it.</li>
+      </ol>
+      <button id="connectButton" class="primary">Connect Google Account</button>
+      <p id="connectError" class="error hidden"></p>
+      <p class="fineprint">
+        Uses Google's private Photos endpoints; the integration may stop working without
+        notice. Experimental software — use at your own risk.
+      </p>
+    </section>
+
+    <!-- Main dashboard -->
+    <section id="dashboard" class="hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2>Folders</h2>
+          <button id="addFolderButton" class="secondary">Add Folder…</button>
+        </div>
+        <ul id="folderList" class="folder-list"></ul>
+        <p id="noFolders" class="muted">No folders chosen yet — add one to begin.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Backup</h2>
+          <label class="quality">
+            Quality
+            <select id="qualitySelect">
+              <option value="original">Original</option>
+              <option value="saver">Storage Saver</option>
+            </select>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="backupButton" class="primary">Back up now</button>
+          <button id="pauseButton" class="secondary" disabled>Pause</button>
+          <button id="cancelButton" class="secondary" disabled>Cancel</button>
+          <button id="retryButton" class="secondary" disabled>Retry failed</button>
+        </div>
+        <div id="summary" class="summary"></div>
+        <div id="scanNote" class="muted hidden"></div>
+      </div>
+
+      <div class="card uploads-card">
+        <div class="card-head">
+          <h2>Uploads</h2>
+          <div class="filters">
+            <button class="chip filter active" data-filter="all">All</button>
+            <button class="chip filter" data-filter="active">Active</button>
+            <button class="chip filter" data-filter="uploaded">Done</button>
+            <button class="chip filter" data-filter="failed">Failed</button>
+          </div>
+        </div>
+        <ul id="uploadList" class="upload-list"></ul>
+        <p id="emptyQueue" class="muted">Nothing queued. Press “Back up now” to scan your folders.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <button id="disconnectButton" class="danger hidden">Disconnect account</button>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
