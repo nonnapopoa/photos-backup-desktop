@@ -6,22 +6,43 @@
 // `oauth_token` cookie straight out of that session's cookie store. Electron's
 // main-process cookies API (unlike a browser's document.cookie) returns
 // HttpOnly cookies, which is the whole reason this works.
+//
+// Google's "This browser or app may not be secure" screen is the failure mode
+// when the environment does not add up. The iOS app's proven configuration is
+// a full mobile-Safari UA — Safari sends no client hints, so there is nothing
+// for Chromium to contradict. Getting away with that from Electron needs three
+// things at once:
+//   1. the iPhone Safari UA (below), never a Chrome UA;
+//   2. stripping Sec-CH-UA-* / X-Client-Data request headers Chromium adds
+//      (a "Safari" request carrying client hints is an instant mismatch);
+//   3. hiding the Chromium-only JS surface (navigator.userAgentData,
+//      window.chrome, navigator.vendor) via a same-world preload.
 
+const path = require('path');
 const { BrowserWindow, session } = require('electron');
 
 const SETUP_URL = 'https://accounts.google.com/EmbeddedSetup';
 const COOKIE_NAME = 'oauth_token';
 const POLL_INTERVAL = 600;
 
-function chromeUserAgent() {
-  const chromiumVersion = process.versions.chrome || '130.0.0.0';
-  let platform;
-  switch (process.platform) {
-    case 'darwin': platform = 'Macintosh; Intel Mac OS X 10_15_7'; break;
-    case 'win32': platform = 'Windows NT 10.0; Win64; x64'; break;
-    default: platform = 'X11; Linux x86_64'; break;
-  }
-  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromiumVersion} Safari/537.36`;
+// Full mobile-Safari UA, the configuration proven against EmbeddedSetup by the
+// upstream iOS app (AccountConnectWebView.swift, Coordinator.safariUserAgent).
+const SAFARI_USER_AGENT =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 '
+  + '(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+
+function stripChromiumFingerprints(authSession) {
+  authSession.setUserAgent(SAFARI_USER_AGENT, 'en-US');
+  authSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = { ...details.requestHeaders };
+    for (const name of Object.keys(headers)) {
+      const lower = name.toLowerCase();
+      if (lower.startsWith('sec-ch-') || lower === 'x-client-data') {
+        delete headers[name];
+      }
+    }
+    callback({ requestHeaders: headers });
+  });
 }
 
 // Resolves with the oauth_token value; rejects if the user closes the window
@@ -29,18 +50,22 @@ function chromeUserAgent() {
 function connectAccount(parentWindow) {
   return new Promise((resolve, reject) => {
     const authSession = session.fromPartition('photosbackup-auth', { cache: false });
-    authSession.setUserAgent(chromeUserAgent());
+    stripChromiumFingerprints(authSession);
 
     const win = new BrowserWindow({
       parent: parentWindow || null,
       modal: !!parentWindow,
-      width: 480,
-      height: 700,
+      width: 400,
+      height: 780,
       title: 'Connect Google Account',
       autoHideMenuBar: true,
       webPreferences: {
         session: authSession,
-        contextIsolation: true,
+        // The preload patches page-visible globals, so it must share the
+        // page's world. It uses no Node/Electron APIs, and the window only
+        // ever loads Google's sign-in page.
+        preload: path.join(__dirname, 'authPreload.js'),
+        contextIsolation: false,
         nodeIntegration: false,
       },
     });
@@ -72,4 +97,4 @@ function connectAccount(parentWindow) {
   });
 }
 
-module.exports = { connectAccount };
+module.exports = { connectAccount, SAFARI_USER_AGENT, stripChromiumFingerprints };

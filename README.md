@@ -44,15 +44,33 @@ npm start
 If npm blocks Electron's postinstall binary download, allow it and reinstall, or run
 `node node_modules/electron/install.js`.
 
-## Run the protocol tests
+## Run the tests
 
 ```bash
-node test/upload-flow-test.js
+node test/upload-flow-test.js   # full upload pipeline against a mock Google server
+npx electron test/signin-smoke.js   # real EmbeddedSetup page: sign-in form vs. "not secure" block
+SMOKE_DEVTOOLS=1 npx electron test/signin-smoke.js   # same, with devtools attached
 ```
 
-Runs the full upload pipeline against a local mock of Google's endpoints: token
-refresh, hash dedup (both hit and miss), resumable session negotiation, byte-exact
-streaming PUT with auth headers, and the commit RPC with its `x-goog-ext-*` headers.
+The upload test covers token refresh, hash dedup (both hit and miss), resumable
+session negotiation, byte-exact streaming PUT with auth headers, and the commit
+RPC with its `x-goog-ext-*` headers. The sign-in smoke test loads the real
+Google page in the exact environment the app builds and exits 0 when the
+sign-in form renders, 2 if Google shows the security block.
+
+### Why the sign-in window presents as iPhone Safari
+
+Google's `EmbeddedSetup` rejects environments it cannot identify with *"This
+browser or app may not be secure."* The upstream iOS app's proven configuration
+is a full mobile-Safari user agent — Safari sends no client hints, so nothing
+contradicts the claim. Reproducing that from Electron takes three things at
+once (`src/main/auth.js` + `src/main/authPreload.js`):
+
+1. the iPhone Safari UA, never a Chrome UA;
+2. stripping `Sec-CH-UA-*` and `X-Client-Data` request headers Chromium adds
+   (a "Safari" request carrying client hints is an instant mismatch);
+3. hiding the Chromium-only JS surface (`navigator.userAgentData`,
+   `window.chrome`, `navigator.vendor`) via a same-world preload.
 
 ## Package installers
 
