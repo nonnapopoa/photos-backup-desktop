@@ -141,4 +141,13 @@ footer { padding: 6px 0 26px; text-align: center; }
 
 .muted { color: var(--muted); font-size: 13px; }
 .error { color: var(--danger); }
+.warning-banner {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin: 0 0 16px;
+}
 .hidden { display: none !important; }

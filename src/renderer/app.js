@@ -4,6 +4,7 @@
 // re-render from the snapshots the main process pushes.
 
 const els = {
+  warningBanner: document.getElementById('warningBanner'),
   onboarding: document.getElementById('onboarding'),
   dashboard: document.getElementById('dashboard'),
   accountBadge: document.getElementById('accountBadge'),
@@ -206,8 +207,8 @@ window.photosBackup.on('settings', (settings) => {
   render();
 });
 window.photosBackup.on('account-warning', (message) => {
-  els.connectError.textContent = message;
-  els.connectError.classList.remove('hidden');
+  els.warningBanner.textContent = message;
+  els.warningBanner.classList.remove('hidden');
 });
 window.photosBackup.on('queue-snapshot', (snapshot) => { state.snapshot = snapshot; render(); });
 window.photosBackup.on('scan-started', () => {

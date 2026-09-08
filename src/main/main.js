@@ -85,15 +85,16 @@ function createWindow() {
     validateCredential(stored)
       .then(() => emitState())
       .catch((error) => {
+        // Do NOT clear the stored credential here: a transient 403 looks the
+        // same as a revoked token at this layer, and destroying a good
+        // credential forces an unnecessary re-login. Warn instead; the user
+        // can disconnect explicitly.
         send('account-warning', error instanceof GPMCError
-          ? error.message
-          : 'The saved credential could not be validated.');
-        if (error instanceof GPMCError && error.kind === 'credentialRejected') {
-          credentials.clear();
-          queue = null;
-          emitState();
-        }
+          ? `${error.message} The saved account is kept — if it keeps failing, disconnect and connect again.`
+          : 'The saved credential could not be validated; uploads will retry automatically.');
       });
+  } else if (credentials.lastLoadFailure) {
+    send('account-warning', credentials.lastLoadFailure.message);
   }
   emitState();
 }
@@ -117,13 +118,24 @@ function registerIpc() {
     if (result.encrypted) {
       return { error: 'Google issued a bound (encrypted) token. This build cannot use it; connect an account whose token is unbound.' };
     }
-    const credential = credentials.save({
+    const credential = {
       androidId: result.androidId,
       email: result.email,
       masterToken: result.masterToken,
       authData: result.authData,
       connectedAt: new Date().toISOString(),
-    });
+    };
+    let persisted = true;
+    let persistError = null;
+    try {
+      credentials.save(credential);
+    } catch (error) {
+      // Usable now, just not across relaunches (same deal as the iOS app's
+      // Unpersisted path when the Keychain refuses).
+      persisted = false;
+      persistError = error.message;
+      credentials.adopt(credential);
+    }
     startQueue(credential);
     try {
       await validateCredential(credential);
@@ -132,7 +144,9 @@ function registerIpc() {
       return { warning: `Connected as ${result.email}, but validation failed: ${error.message}` };
     }
     emitState();
-    return { email: result.email };
+    return persisted
+      ? { email: result.email }
+      : { email: result.email, warning: `Connected as ${result.email} for this session, but the credential could not be saved to disk (${persistError}). You may need to sign in again after restarting.` };
   });
 
   ipcMain.handle('disconnect-account', () => {
