@@ -99,20 +99,25 @@ function render() {
   const counts = snapshot?.counts;
   const hasActive = !!counts && (counts.active > 0 || counts.waiting > 0);
   const hasFailed = !!counts && counts.failed > 0;
+  const hasCancelled = !!counts && counts.cancelled > 0;
   const paused = !!snapshot?.paused;
   const halted = !!snapshot?.halted;
   const cooling = !!snapshot && snapshot.cooldownRemainingMs > 0;
   els.backupButton.disabled = hasActive;
   els.pauseButton.disabled = !hasActive || paused;
   els.cancelButton.disabled = !hasActive && !(counts && counts.waiting > 0);
-  els.retryButton.disabled = !hasFailed && !halted;
+  // Retry re-queues both failed and cancelled rows.
+  els.retryButton.disabled = !hasFailed && !hasCancelled && !halted;
   els.pauseButton.textContent = paused ? 'Resume' : 'Pause';
 
   // Batch / halt / cooldown notes
+  const queueHasWork = !!counts && (counts.active > 0 || counts.waiting > 0);
   if (halted) {
     showNote(`Stopped: ${snapshot.halted} — check the account in Settings, then press Retry failed.`);
-  } else if (cooling) {
-    showNote(`${snapshot.cooldownReason} (resuming in ${Math.ceil(snapshot.cooldownRemainingMs / 1000)}s).`);
+  } else if (cooling && queueHasWork) {
+    showNote(`${snapshot.cooldownReason} (resuming in ${Math.ceil(snapshot.cooldownRemainingMs / 1000)}s).`, true);
+  } else if (cooling && state.remaining > 0) {
+    showNote(`Rate-limit pause before the next batch (${Math.ceil(snapshot.cooldownRemainingMs / 1000)}s).`, true);
   } else if (state.remaining > 0 && counts && counts.active === 0 && counts.waiting === 0) {
     showNote(`${state.remaining} more file${state.remaining === 1 ? '' : 's'} waiting — the next batch starts automatically.`);
   } else if (state.remaining > 0) {
@@ -156,13 +161,15 @@ function render() {
 function showNote(text, sticky = false) {
   els.scanNote.textContent = text;
   els.scanNote.classList.remove('hidden');
-  if (!sticky) {
+  if (sticky) {
+    els.scanNote.dataset.sticky = '1';
+    clearTimeout(showNote.timer);
+  } else {
+    delete els.scanNote.dataset.sticky;
     clearTimeout(showNote.timer);
     showNote.timer = setTimeout(() => {
       if (els.scanNote.dataset.sticky !== '1') els.scanNote.classList.add('hidden');
     }, 12000);
-  } else {
-    els.scanNote.dataset.sticky = '1';
   }
 }
 
