@@ -1,0 +1,70 @@
+name: Build macOS DMG
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build DMG
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run protocol and queue tests
+        run: |
+          node test/upload-flow-test.js
+          node test/stream-upload-test.js
+          node test/queue-test.js
+          node test/status-test.js
+
+      # Unsigned build: no Developer ID identity is configured. Both
+      # architectures build in one invocation on the arm64 runner; the x64
+      # Electron dist is downloaded and packaged cross-arch.
+      - name: Build DMGs (arm64 + x64)
+        run: npx electron-builder --mac dmg --arm64 --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload DMG artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg
+          path: release/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Attach to release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only tag pushes create a release; manual dispatch just builds artifacts.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download DMGs
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg
+          path: dmg
+
+      - name: Create release and upload DMGs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dmg/*.dmg \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
