@@ -14,11 +14,13 @@ const els = {
   noFolders: document.getElementById('noFolders'),
   addFolderButton: document.getElementById('addFolderButton'),
   backupButton: document.getElementById('backupButton'),
+  recheckButton: document.getElementById('recheckButton'),
   pauseButton: document.getElementById('pauseButton'),
   cancelButton: document.getElementById('cancelButton'),
   retryButton: document.getElementById('retryButton'),
   storageSaverToggle: document.getElementById('storageSaverToggle'),
   useQuotaToggle: document.getElementById('useQuotaToggle'),
+  concurrencySelect: document.getElementById('concurrencySelect'),
   summary: document.getElementById('summary'),
   scanNote: document.getElementById('scanNote'),
   uploadList: document.getElementById('uploadList'),
@@ -29,10 +31,9 @@ const els = {
 
 const state = {
   account: { status: 'disconnected' },
-  settings: { folders: [], storageSaver: false, useQuota: false },
+  settings: { folders: [], storageSaver: false, useQuota: false, concurrency: 2 },
   snapshot: null,
   filter: 'all',
-  remaining: 0,
 };
 
 const STATUS_LABELS = {
@@ -93,6 +94,7 @@ function render() {
 
   els.storageSaverToggle.checked = !!state.settings.storageSaver;
   els.useQuotaToggle.checked = !!state.settings.useQuota;
+  els.concurrencySelect.value = String(state.settings.concurrency || 2);
 
   // Queue controls
   const snapshot = state.snapshot;
@@ -110,18 +112,12 @@ function render() {
   els.retryButton.disabled = !hasFailed && !hasCancelled && !halted;
   els.pauseButton.textContent = paused ? 'Resume' : 'Pause';
 
-  // Batch / halt / cooldown notes
+  // Halt / cooldown notes
   const queueHasWork = !!counts && (counts.active > 0 || counts.waiting > 0);
   if (halted) {
-    showNote(`Stopped: ${snapshot.halted} — check the account in Settings, then press Retry failed.`);
+    showNote(`Stopped: ${snapshot.halted} — free up space or reconnect the account, then press Retry failed.`);
   } else if (cooling && queueHasWork) {
     showNote(`${snapshot.cooldownReason} (resuming in ${Math.ceil(snapshot.cooldownRemainingMs / 1000)}s).`, true);
-  } else if (cooling && state.remaining > 0) {
-    showNote(`Rate-limit pause before the next batch (${Math.ceil(snapshot.cooldownRemainingMs / 1000)}s).`, true);
-  } else if (state.remaining > 0 && counts && counts.active === 0 && counts.waiting === 0) {
-    showNote(`${state.remaining} more file${state.remaining === 1 ? '' : 's'} waiting — the next batch starts automatically.`);
-  } else if (state.remaining > 0) {
-    showNote(`${state.remaining} more file${state.remaining === 1 ? '' : 's'} will follow in batches of 250.`);
   }
 
   // Summary chips — cancelled included so the numbers always add up.
@@ -252,10 +248,6 @@ window.photosBackup.on('account-warning', (message) => {
 window.photosBackup.on('queue-snapshot', (snapshot) => { state.snapshot = snapshot; render(); });
 window.photosBackup.on('scan-started', () => showNote('Scanning folders…', true));
 window.photosBackup.on('scan-finished', ({ count }) => showNote(`Found ${count} media file${count === 1 ? '' : 's'}.`));
-window.photosBackup.on('batch-started', ({ queued, remaining }) => {
-  state.remaining = remaining;
-  showNote(`Next batch: ${queued} file${queued === 1 ? '' : 's'} queued${remaining > 0 ? ` (${remaining} more to follow)` : ''}.`);
-});
 
 // Wire controls
 els.connectButton.onclick = async () => {
@@ -280,24 +272,31 @@ els.addFolderButton.onclick = async () => {
   render();
 };
 
-els.backupButton.onclick = async () => {
-  const result = await window.photosBackup.runBackup();
-  if (result?.error) showNote(`Could not start: ${result.error === 'no-folders' ? 'add a folder first.' : 'connect an account first.'}`, true);
-  else if (result) {
-    state.remaining = result.remaining || 0;
-    showNote(result.queued > 0
-      ? `Queued ${result.queued} of ${result.found} file${result.found === 1 ? '' : 's'}${state.remaining > 0 ? ` — ${state.remaining} more will follow in batches of 250` : ''}.`
-      : 'Everything in these folders is already backed up.', true);
+async function runBackupFlow(recheck) {
+  const result = await (recheck ? window.photosBackup.recheckBackup() : window.photosBackup.runBackup());
+  if (result?.error) {
+    showNote(`Could not start: ${result.error === 'no-folders' ? 'add a folder first.' : 'connect an account first.'}`, true);
+    return;
   }
+  if (!result) return;
+  const bits = [];
+  if (result.released > 0) bits.push(`${result.released} previously failed file${result.released === 1 ? '' : 's'} released for retry`);
+  bits.push(result.queued > 0
+    ? `queued ${result.queued} of ${result.found} file${result.found === 1 ? '' : 's'}`
+    : 'everything in these folders is already backed up');
+  if (result.recheck) bits.unshift('re-checking the cloud — files still present come back as "already backed up"');
+  showNote(`${bits.join('; ')}.`, true);
   render();
-};
+}
+
+els.backupButton.onclick = () => runBackupFlow(false);
+els.recheckButton.onclick = () => runBackupFlow(true);
 els.pauseButton.onclick = () => (state.snapshot?.paused ? window.photosBackup.resume() : window.photosBackup.pause());
 els.cancelButton.onclick = () => window.photosBackup.cancelAll();
 els.retryButton.onclick = () => window.photosBackup.retryFailed();
 els.disconnectButton.onclick = async () => {
   await window.photosBackup.disconnectAccount();
   state.snapshot = null;
-  state.remaining = 0;
 };
 
 els.storageSaverToggle.onchange = async () => {
@@ -306,6 +305,10 @@ els.storageSaverToggle.onchange = async () => {
 };
 els.useQuotaToggle.onchange = async () => {
   state.settings = await window.photosBackup.updateSettings({ useQuota: els.useQuotaToggle.checked });
+  render();
+};
+els.concurrencySelect.onchange = async () => {
+  state.settings = await window.photosBackup.updateSettings({ concurrency: Number(els.concurrencySelect.value) });
   render();
 };
 

@@ -5,7 +5,7 @@
 // Run with: node test/queue-test.js
 
 const assert = require('assert');
-const { UploadQueue, backoffSeconds } = require('../src/main/uploadQueue');
+const { UploadQueue, backoffSeconds, clampConcurrency } = require('../src/main/uploadQueue');
 const { GPMCError } = require('../src/main/gpmc');
 const { signature } = require('../src/main/settings');
 
@@ -141,6 +141,57 @@ async function main() {
   const second = await queue.enqueueScan(scan, 250);
   assert.strictEqual(second.queued, 0, 'completed files are skipped on the next scan');
   console.log('test 4 OK: completed files are skipped on later runs');
+
+  // 5. storageFull halts the queue like a rejected credential.
+  await withQueue({
+    upload: async () => { throw new GPMCError('storageFull', 'The Google account is out of storage.'); },
+  }, async (queue) => {
+    await queue.enqueueScan(items(2), 250);
+    await waitFor(() => queue.haltReason !== null, 5000);
+    assert.match(queue.haltReason, /out of storage/);
+    assert.ok(queue.items.every((i) => i.attempts <= 1), 'no retry budget burned on a permanent halt');
+    queue.cancelAll();
+  });
+  console.log('test 5 OK: storageFull halts the queue');
+
+  // 6. releaseRetryableFailures: transient failures requeue, permanent do not.
+  await withQueue({
+    upload: async (pathArg) => {
+      if (pathArg.includes('transient')) throw serverError(500);
+      throw new GPMCError('malformed', 'That item is unreadable.');
+    },
+  }, async (queue) => {
+    queue.maxConcurrent = 1; // deterministic: run items one at a time
+    await queue.enqueueScan([
+      { path: '/photos/transient.jpg', filename: 't.jpg', size: 1, mtimeMs: 1 },
+      { path: '/photos/broken.jpg', filename: 'b.jpg', size: 1, mtimeMs: 2 },
+    ], 250);
+    await waitFor(() => queue.items.every((i) => i.status === 'failed'), 30000);
+    const released = queue.releaseRetryableFailures();
+    assert.strictEqual(released, 1, 'only the retryable failure is released');
+    const transient = queue.items.find((i) => i.path.includes('transient'));
+    assert.ok(['waiting', 'exporting', 'hashing', 'checkingDuplicate', 'preparing'].includes(transient.status),
+      `released item is queued or already running (was ${transient.status})`);
+    assert.strictEqual(queue.items.find((i) => i.path.includes('broken')).status, 'failed');
+    queue.cancelAll();
+  });
+  console.log('test 6 OK: releaseRetryableFailures requeues only transient failures');
+
+  // 7. Concurrency clamp (upstream 0.3.2: 1–10).
+  assert.strictEqual(clampConcurrency(0), 1);
+  assert.strictEqual(clampConcurrency(11), 10);
+  assert.strictEqual(clampConcurrency(4.4), 4);
+  assert.strictEqual(clampConcurrency('bogus'), 2);
+  await withQueue({
+    upload: async () => ({ outcome: 'uploaded', mediaKey: 'k' }),
+  }, async (queue) => {
+    assert.strictEqual(queue.maxConcurrent, 2, 'default');
+    queue.setMaxConcurrent(99);
+    assert.strictEqual(queue.maxConcurrent, 10);
+    queue.setMaxConcurrent(1);
+    assert.strictEqual(queue.maxConcurrent, 1);
+  });
+  console.log('test 7 OK: concurrency is configurable and clamped to 1–10');
 
   console.log('queue-test: all assertions passed');
   process.exit(0);

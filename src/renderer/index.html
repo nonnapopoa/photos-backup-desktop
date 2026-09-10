@@ -59,10 +59,18 @@
           <div class="toggles">
             <label class="toggle"><input type="checkbox" id="storageSaverToggle"> Storage Saver</label>
             <label class="toggle"><input type="checkbox" id="useQuotaToggle"> Count against storage quota</label>
+            <label class="toggle">Simultaneous uploads
+              <select id="concurrencySelect" class="concurrency">
+                <option>1</option><option>2</option><option>3</option><option>4</option>
+                <option>5</option><option>6</option><option>7</option><option>8</option>
+                <option>9</option><option>10</option>
+              </select>
+            </label>
           </div>
         </div>
         <div class="actions">
           <button id="backupButton" class="primary">Back up now</button>
+          <button id="recheckButton" class="secondary">Re-check backups</button>
           <button id="pauseButton" class="secondary" disabled>Pause</button>
           <button id="cancelButton" class="secondary" disabled>Cancel</button>
           <button id="retryButton" class="secondary" disabled>Retry failed</button>

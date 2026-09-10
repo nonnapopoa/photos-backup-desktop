@@ -16,6 +16,8 @@ const DEFAULT_SETTINGS = {
   // asks for Storage Saver — uploads go up as Pixel XL originals.
   storageSaver: false,
   useQuota: false,
+  // Simultaneous uploads, 1–10 (upstream 0.3.2).
+  concurrency: 2,
   autoStart: true,
 };
 
@@ -75,6 +77,13 @@ class Settings {
 
   isCompleted(email, item) {
     return this.loadCompleted(email).has(signature(item));
+  }
+
+  // Upstream "Verify Backup": forget the account's completed record so a
+  // re-check re-queues everything. The Google-side hash lookup settles what is
+  // really in the cloud, so this only costs one hash + one RPC per file.
+  clearCompleted(email) {
+    try { fs.unlinkSync(completedPath(email)); } catch { /* ignore */ }
   }
 }
 

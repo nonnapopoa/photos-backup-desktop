@@ -102,6 +102,7 @@ footer { padding: 6px 0 26px; text-align: center; }
 .toggles { display: flex; gap: 16px; flex-wrap: wrap; }
 .toggle { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .toggle input { accent-color: var(--accent); }
+.toggle .concurrency { font: inherit; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
 
 .summary { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
 .summary .chip { background: var(--chip); }

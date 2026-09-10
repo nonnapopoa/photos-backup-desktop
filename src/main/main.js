@@ -9,7 +9,7 @@ const { connectAccount } = require('./auth');
 const { CredentialStore } = require('./credentialStore');
 const { Settings } = require('./settings');
 const { scanFolders } = require('./mediaScanner');
-const { UploadQueue } = require('./uploadQueue');
+const { UploadQueue, clampConcurrency } = require('./uploadQueue');
 const TokenExchange = require('./tokenExchange');
 const { GPMCClient, GPMCError } = require('./gpmc');
 
@@ -36,9 +36,6 @@ function emitState() {
 
 function pushSnapshot(snapshot) {
   send('queue-snapshot', snapshot);
-  const drained = snapshot.counts.active === 0 && snapshot.counts.waiting === 0
-    && !snapshot.paused && !snapshot.halted && snapshot.cooldownRemainingMs === 0;
-  if (drained) scheduleNextBatch();
 }
 
 async function validateCredential(credential) {
@@ -51,44 +48,20 @@ function startQueue(credential) {
   emitState();
 }
 
-// Upstream's bounded-batch technique: at most 250 items per activation
-// (AutomaticBackupCoordinator.runForegroundBackupIfNeeded), with the next
-// batch picked up automatically once the queue settles — the desktop stand-in
-// for iOS's repeated foreground activations.
-const BATCH_LIMIT = 250;
-const NEXT_BATCH_DELAY_MS = 5000;
-const scanCache = { items: [], remaining: 0, timer: null };
-
-async function runBackup() {
+// Upstream 0.3.4: a manual "Back Up Now" queues the whole selection — the
+// bounded batches remain an automatic-pass technique only. Quota pacing is
+// handled at the request level by the queue's 429 cooldown and retry backoff.
+async function runBackup({ recheck = false } = {}) {
   if (!queue) return { error: 'not-connected' };
   const folders = settings.get('folders') || [];
   if (!folders.length) return { error: 'no-folders' };
+  const released = queue.releaseRetryableFailures();
+  if (recheck) settings.clearCompleted(queue.email);
   send('scan-started', {});
   const found = await scanFolders(folders);
   send('scan-finished', { count: found.length });
-  const { queued, remaining } = await queue.enqueueScan(found, BATCH_LIMIT);
-  scanCache.items = found;
-  scanCache.remaining = remaining;
-  scheduleNextBatch();
-  return { found: found.length, queued, remaining };
-}
-
-function stopBatching() {
-  scanCache.remaining = 0;
-  if (scanCache.timer) { clearTimeout(scanCache.timer); scanCache.timer = null; }
-}
-
-function scheduleNextBatch() {
-  if (scanCache.timer || !queue || scanCache.remaining <= 0) return;
-  scanCache.timer = setTimeout(() => {
-    scanCache.timer = null;
-    if (!queue || queue.paused || queue.cancelRequested || queue.haltReason
-        || scanCache.remaining <= 0 || !queue.isIdle) return;
-    const { queued, remaining } = queue.enqueueScan(scanCache.items, BATCH_LIMIT);
-    scanCache.remaining = remaining;
-    if (queued > 0) send('batch-started', { queued, remaining });
-  }, NEXT_BATCH_DELAY_MS);
-  scanCache.timer.unref?.();
+  const { queued } = await queue.enqueueScan(found);
+  return { found: found.length, queued, released, recheck };
 }
 
 function createWindow() {
@@ -182,7 +155,6 @@ function registerIpc() {
   });
 
   ipcMain.handle('disconnect-account', () => {
-    stopBatching();
     queue?.cancelAll();
     queue = null;
     credentials.clear();
@@ -215,16 +187,19 @@ function registerIpc() {
     for (const key of ['storageSaver', 'useQuota', 'autoStart']) {
       if (key in patch) allowed[key] = !!patch[key];
     }
+    if ('concurrency' in patch) allowed.concurrency = clampConcurrency(patch.concurrency);
     settings.update(allowed);
+    queue?.setMaxConcurrent(settings.get('concurrency'));
     emitState();
     return settings.data;
   });
 
   ipcMain.handle('run-backup', () => runBackup());
+  ipcMain.handle('recheck-backup', () => runBackup({ recheck: true }));
 
   ipcMain.handle('queue-pause', () => { queue?.pause(); return { ok: true }; });
   ipcMain.handle('queue-resume', () => { queue?.resume(); return { ok: true }; });
-  ipcMain.handle('queue-cancel', () => { stopBatching(); queue?.cancelAll(); return { ok: true }; });
+  ipcMain.handle('queue-cancel', () => { queue?.cancelAll(); return { ok: true }; });
   ipcMain.handle('queue-retry-failed', () => { queue?.retryFailed(); return { ok: true }; });
 
   ipcMain.handle('open-external', (_event, url) => {

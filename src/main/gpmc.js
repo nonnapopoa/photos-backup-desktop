@@ -6,19 +6,54 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { intField, bytesField, stringField, fields, stringAt } = require('./proto');
+const { intField, bytesField, stringField, fields, numberAt, stringAt } = require('./proto');
+
+// The `google.rpc.Status` Google puts in a protobuf error body: a canonical
+// code in field 1, an English message in field 2. The code is the half worth
+// branching on — the message is prose Google can reword at any time.
+const RPC_CODES = {
+  3: 'invalidArgument',
+  4: 'deadlineExceeded',
+  7: 'permissionDenied',
+  8: 'resourceExhausted',
+  9: 'failedPrecondition',
+  10: 'aborted',
+  14: 'unavailable',
+  16: 'unauthenticated',
+};
+
+function parseGoogleStatus(buffer) {
+  if (!buffer || !buffer.length) return null;
+  let rawNumber;
+  try { rawNumber = numberAt(1, buffer); } catch { return null; }
+  if (rawNumber == null || rawNumber <= 0n) return null; // code 0 is OK, not a failure
+  const rawCode = Number(rawNumber);
+  let message = null;
+  try { message = stringAt([2], buffer); } catch { /* absent */ }
+  return { rawCode, code: RPC_CODES[rawCode] || null, message };
+}
 
 class GPMCError extends Error {
-  constructor(kind, message) {
+  constructor(kind, message, status = null) {
     super(message);
     this.name = 'GPMCError';
-    this.kind = kind; // credentialRejected | tokenBound | transport | server | malformed
+    this.kind = kind; // credentialRejected | tokenBound | transport | server | malformed | invalidUploadReceipt | storageFull
+    this.status = status; // parsed google.rpc.Status, when Google sent one
     this.statusCode = kind === 'server' ? Number(message.match(/HTTP (\d+)/)?.[1] || 0) : 0;
   }
   get retryable() {
-    if (this.kind === 'transport') return true;
+    if (this.kind === 'transport' || this.kind === 'invalidUploadReceipt') return true;
     if (this.kind === 'server') return this.statusCode === 408 || this.statusCode === 429 || this.statusCode >= 500;
     return false;
+  }
+  // Whether a commit failure says the receipt itself is unusable, so the item
+  // is worth another preflight and transfer rather than being failed.
+  // INVALID_ARGUMENT is the structural signal; the "valid blueprint" wording
+  // is the fallback for rejections that arrive without a parseable status.
+  static rejectsReceipt(error) {
+    if (!(error instanceof GPMCError) || error.kind !== 'server') return false;
+    if (error.status?.code) return error.status.code === 'invalidArgument';
+    return /valid blueprint/i.test(error.message);
   }
 }
 
@@ -57,10 +92,12 @@ function authDataBody(values) {
     .join('&');
 }
 
-// Quote Google's error bodies: printable text as-is, protobuf as a hex prefix.
+// Quote Google's error bodies. Prefer the status message, fall back to a
+// printable body, and keep the hex prefix for anything else.
 function explanation(buffer, limit = 240) {
   if (!buffer || !buffer.length) return '';
-  const text = buffer.toString('utf8');
+  const status = parseGoogleStatus(buffer);
+  const text = status?.message ?? buffer.toString('utf8');
   const printable = [...text].every((ch) => ch === '\n' || ch === '\t' || (ch.charCodeAt(0) >= 0x20 && ch.charCodeAt(0) !== 0x7f));
   let detail;
   if (printable) {
@@ -71,17 +108,41 @@ function explanation(buffer, limit = 240) {
   return detail ? ` Google said: ${detail}` : '';
 }
 
-async function checkedStatus(response) {
+// CommitToken's field 2 contains the opaque upload token. Parsing alone
+// accepts an empty message (or an unrelated protobuf error) as a receipt.
+function validateReceipt(receipt) {
+  let token;
+  try { token = (fields(receipt)[2] || [])[0]; } catch { token = undefined; }
+  if (!token || !token.length) {
+    throw new GPMCError('invalidUploadReceipt',
+      'Google did not return a usable upload receipt. The file must be transferred again.');
+  }
+}
+
+async function checkedStatus(response, operation = 'request') {
+  const body = Buffer.from(await response.arrayBuffer());
   if (response.status === 401 || response.status === 403) {
     throw new GPMCError('credentialRejected',
       `Google rejected the stored credential (HTTP ${response.status}). Connect the account again.`);
   }
   if (!(response.status >= 200 && response.status < 300)) {
-    const body = Buffer.from(await response.arrayBuffer());
+    const status = parseGoogleStatus(body);
+    const detail = explanation(body);
+    // The canonical code says more than the HTTP status: rate limiting shares
+    // RESOURCE_EXHAUSTED with 429 (already retryable), but a non-429 code 8
+    // means the account itself has no room left, which retrying cannot fix.
+    if (status?.code === 'resourceExhausted' && response.status !== 429) {
+      throw new GPMCError('storageFull',
+        `The Google account is out of storage. Free up space in Google Photos, then resume.${detail}`, status);
+    }
+    if (status?.code === 'unauthenticated' || status?.code === 'permissionDenied') {
+      throw new GPMCError('credentialRejected',
+        `Google rejected the stored credential during ${operation}. Connect the account again.${detail}`, status);
+    }
     throw new GPMCError('server',
-      `Google returned HTTP ${response.status}. Check your connection and try again.${explanation(body)}`);
+      `Google returned HTTP ${response.status} during ${operation}.${detail}`, status);
   }
-  return response;
+  return body;
 }
 
 // Stream a file through SHA-1, reporting progress. Returns {hash, size}.
@@ -228,7 +289,12 @@ class GPMCClient {
       throw new GPMCError('credentialRejected',
         `Google rejected the stored credential (${parsed.Error}). Connect the account again.`);
     }
-    await checkedStatus(response);
+    if (!(response.status >= 200 && response.status < 300)) {
+      const body = Buffer.from(text);
+      const status = parseGoogleStatus(body);
+      throw new GPMCError('server',
+        `Google returned HTTP ${response.status} during authentication.${explanation(body)}`, status);
+    }
     if (!parsed.Auth) {
       throw new GPMCError('credentialRejected', 'Google did not issue a token. Connect the account again.');
     }
@@ -248,7 +314,9 @@ class GPMCClient {
     await this.rpc(GPMCClient.HASH_CHECK_METHOD, check);
   }
 
-  async request(url, { method = 'POST', body = undefined, headers = {}, signal } = {}) {
+  // Authenticated request. The body is always drained (so the connection
+  // returns to the pool) and validated; returns { response, body }.
+  async request(url, { method = 'POST', body = undefined, headers = {}, operation = 'request', signal } = {}) {
     if (this.expiry <= Date.now() + 30000) await this.authenticate();
     const merged = {
       'Authorization': `Bearer ${this.token}`,
@@ -264,7 +332,9 @@ class GPMCClient {
       if (signal?.aborted) throw new Error('aborted');
       throw new GPMCError('transport', `Could not reach Google: ${error.message}`);
     }
-    // A token revoked elsewhere dies mid-session; spend one forced refresh.
+    // A token revoked elsewhere dies mid-session; spend one forced refresh on
+    // these small replayable data requests (the file PUT bypasses this helper
+    // and retains its own upload ID).
     if (response.status === 401 || response.status === 403) {
       this.expiry = 0;
       await this.authenticate();
@@ -275,15 +345,19 @@ class GPMCClient {
         throw new GPMCError('transport', `Could not reach Google: ${error.message}`);
       }
     }
-    await checkedStatus(response);
-    return response;
+    const drained = await checkedStatus(response, operation);
+    return { response, body: drained };
   }
 
   async rpc(method, body, { ext = false } = {}) {
     const url = `https://photosdata-pa.googleapis.com/6439526531001121323/${method}`;
     const headers = ext ? GPMCClient.EXT_HEADERS : {};
-    const response = await this.request(url, { body, headers });
-    return Buffer.from(await response.arrayBuffer());
+    const { body: payload } = await this.request(url, {
+      body,
+      headers,
+      operation: method === GPMCClient.COMMIT_METHOD ? 'finalization' : 'duplicate check',
+    });
+    return payload;
   }
 
   // SHA-1 the file, ask whether Google already holds it, and otherwise
@@ -308,18 +382,17 @@ class GPMCClient {
     const prepareBody = Buffer.concat([
       intField(1, 2), intField(2, 2), intField(3, 1), intField(4, 3), intField(7, BigInt(size)),
     ]);
-    const prepared = await this.request(GPMCClient.UPLOAD_ENDPOINT, {
+    const { response: prepared, body: _prepareBody } = await this.request(GPMCClient.UPLOAD_ENDPOINT, {
       body: prepareBody,
       headers: {
         'X-Goog-Hash': `sha1=${hash.toString('base64')}`,
         'X-Upload-Content-Length': String(size),
       },
+      operation: 'upload initialization',
       signal,
     });
     const uploadID = prepared.headers.get('x-guploader-uploadid');
     if (!uploadID) throw new GPMCError('malformed', 'Google did not return an upload ID.');
-    // Drain the body so the connection returns to the pool before the PUT.
-    await prepared.arrayBuffer().catch(() => undefined);
 
     onPhase({ phase: 'sending', sent: 0, total: size });
     const putHeaders = {
@@ -335,11 +408,11 @@ class GPMCClient {
       (sent, total) => onPhase({ phase: 'sending', sent, total: total > 0 ? total : size }),
       signal,
     );
-    if (!(receiptResponse.status >= 200 && receiptResponse.status < 300)) {
-      await checkedStatus(receiptResponse); // throws with the body quoted
-    }
-    const receipt = Buffer.from(await receiptResponse.arrayBuffer());
-    fields(receipt); // must parse; otherwise it is not what we expect
+    // checkedStatus drains and maps the error body; validateReceipt then makes
+    // sure the receipt actually carries an upload token in field 2 — an empty
+    // or unrelated protobuf here would otherwise fail later as HTTP 400.
+    const receipt = await checkedStatus(receiptResponse, 'file transfer');
+    validateReceipt(receipt);
 
     onPhase({ phase: 'finalizing' });
     const date = modified ?? stat.mtime;
@@ -357,13 +430,23 @@ class GPMCClient {
       stringField(4, 'Google'),
       intField(5, 28),
     ]);
-    const committed = await this.rpc(GPMCClient.COMMIT_METHOD,
-      Buffer.concat([bytesField(1, metadata), bytesField(2, device), bytesField(3, Buffer.from([1, 3]))]),
-      { ext: true });
+    let committed;
+    try {
+      committed = await this.rpc(GPMCClient.COMMIT_METHOD,
+        Buffer.concat([bytesField(1, metadata), bytesField(2, device), bytesField(3, Buffer.from([1, 3]))]),
+        { ext: true });
+    } catch (error) {
+      // A commit that rejects the receipt itself (INVALID_ARGUMENT) is worth a
+      // fresh preflight and transfer, not a permanent failure.
+      if (GPMCError.rejectsReceipt(error)) {
+        throw new GPMCError('invalidUploadReceipt', error.message, error.status);
+      }
+      throw error;
+    }
     const mediaKey = stringAt([1, 3, 1], committed);
     if (!mediaKey) throw new GPMCError('malformed', 'Google rejected the upload during finalization.');
     return { outcome: 'uploaded', mediaKey };
   }
 }
 
-module.exports = { GPMCClient, GPMCError, parseAuthData, authDataBody, streamUpload };
+module.exports = { GPMCClient, GPMCError, parseAuthData, authDataBody, streamUpload, parseGoogleStatus, validateReceipt };

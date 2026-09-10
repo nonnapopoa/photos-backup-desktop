@@ -52,7 +52,8 @@ async function main() {
       }
       if (req.url.startsWith(UPLOAD_URL.replace('https://photos.googleapis.com', '') + '?upload_id=')) {
         seenUploads.set(new URL(req.url, 'http://x').searchParams.get('upload_id'), body);
-        const receipt = bytesField(1, Buffer.from('mock-receipt'));
+        // A valid receipt: the opaque upload token lives in field 2.
+        const receipt = bytesField(2, Buffer.from('mock-upload-token'));
         res.writeHead(200, { 'Content-Type': 'application/x-protobuf' });
         res.end(receipt);
         return;

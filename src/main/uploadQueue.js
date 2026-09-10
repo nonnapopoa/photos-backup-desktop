@@ -13,11 +13,19 @@
 const { GPMCClient, GPMCError } = require('./gpmc');
 const { signature } = require('./settings');
 
-const CONCURRENCY = 2;
+const DEFAULT_CONCURRENCY = 2;
 const MAX_ATTEMPTS = 3;
+const MIN_CONCURRENCY = 1;
+const MAX_CONCURRENCY = 10;
 // Upstream: scheduleRetry(after: min(30, pow(2, attempt))) — 2s, 4s, 8s.
 const backoffSeconds = (attempt) => Math.min(30, 2 ** attempt);
 const QUOTA_COOLDOWN_MS = 60000;
+
+const clampConcurrency = (n) => {
+  const value = Number(n);
+  return Math.min(MAX_CONCURRENCY, Math.max(MIN_CONCURRENCY,
+    Math.round(Number.isFinite(value) ? value : DEFAULT_CONCURRENCY)));
+};
 
 class UploadQueue {
   constructor({ credential, settings, onSnapshot, clientFactory, quotaCooldownMs = QUOTA_COOLDOWN_MS }) {
@@ -27,15 +35,25 @@ class UploadQueue {
     this.settings = settings;
     this.onSnapshot = onSnapshot || (() => {});
     this.quotaCooldownMs = quotaCooldownMs;
+    this.maxConcurrent = clampConcurrency(settings?.get?.('concurrency') ?? DEFAULT_CONCURRENCY);
     this.items = [];
     this.paused = false;
     this.cancelRequested = false;
     this.abort = new AbortController();
     this.snapTimer = null;
-    this.haltReason = null;       // set when the credential is refused
+    this.haltReason = null;       // set when the credential is refused / storage is full
     this.cooldownUntil = 0;       // set when Google answers 429
     this.cooldownReason = null;
     this.retryTimers = new Set();
+  }
+
+  // Upstream setMaxConcurrent: applying a lower limit lets in-flight work
+  // finish; a higher one starts replacements on the next pump.
+  setMaxConcurrent(n) {
+    const clamped = clampConcurrency(n);
+    if (clamped === this.maxConcurrent) return;
+    this.maxConcurrent = clamped;
+    this.pump();
   }
 
   // Replace the queue with a scan of the configured folders. Items already
@@ -77,6 +95,29 @@ class UploadQueue {
     this.abort = new AbortController();
     this.emitSnapshot();
     this.pump();
+  }
+
+  // Upstream retryRetryableFailures(): requeue every failed row whose error
+  // was transient (transport, 5xx, quota, invalid receipt) so the next run
+  // picks them up without the user pressing anything. Permanent failures —
+  // unreadable files, refused credentials — are left alone.
+  releaseRetryableFailures() {
+    let released = 0;
+    for (const item of this.items) {
+      if (item.status === 'failed' && item.retryable) {
+        item.status = 'waiting';
+        item.error = null;
+        item.detail = 'released for retry';
+        item.attempts = 0;
+        released += 1;
+      }
+    }
+    if (released) {
+      this.haltReason = null;
+      this.emitSnapshot();
+      this.pump();
+    }
+    return released;
   }
 
   pause() { this.paused = true; this.emitSnapshot(); }
@@ -147,7 +188,7 @@ class UploadQueue {
       return;
     }
     const inFlight = this.items.filter((i) => this.isRunning(i.status)).length;
-    let slots = CONCURRENCY - inFlight;
+    let slots = this.maxConcurrent - inFlight;
     for (const item of this.items) {
       if (slots <= 0) break;
       if (item.status !== 'waiting') continue;
@@ -210,9 +251,10 @@ class UploadQueue {
         item.status = 'cancelled';
         item.detail = null;
       } else if (error instanceof GPMCError
-                 && (error.kind === 'credentialRejected' || error.kind === 'tokenBound')) {
-        // Upstream: the item goes back to queued and the queue halts — no
-        // other item can succeed until the account is reconnected.
+                 && (error.kind === 'credentialRejected' || error.kind === 'tokenBound' || error.kind === 'storageFull')) {
+        // Upstream: the item goes back to queued and the queue halts — no other
+        // item can succeed until the account is reconnected (or storage is
+        // freed, which only the user can do).
         item.status = 'waiting';
         item.detail = null;
         this.halt(error);
@@ -228,6 +270,7 @@ class UploadQueue {
           this.scheduleRetry(item, backoffSeconds(item.attempts));
         } else {
           item.status = 'failed';
+          item.retryable = !!retryable;
           item.error = error.message;
           item.detail = null;
         }
@@ -279,4 +322,4 @@ class UploadQueue {
   }
 }
 
-module.exports = { UploadQueue, backoffSeconds, CONCURRENCY, MAX_ATTEMPTS };
+module.exports = { UploadQueue, backoffSeconds, clampConcurrency, DEFAULT_CONCURRENCY, MAX_ATTEMPTS };

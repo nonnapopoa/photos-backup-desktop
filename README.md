@@ -21,18 +21,31 @@ the iOS Photos library replaced by folders you choose.
 | BGProcessingTask background windows | Desktop queue with pause/resume/cancel and per-account skip memory |
 | SwiftUI views | Plain HTML/CSS/JS renderer |
 
-Uploads follow the iOS app's exact scheduling technique: oldest-first batches of
-at most 250 items per activation (the next batch starts automatically once the
-queue drains), concurrency 2, SHA-1 hash dedup against Google's side before any
-bytes move, resumable upload sessions, and the upstream retry schedule
-(`min(30, 2^attempt)`, 3 attempts). A rejected credential requeues everything
-and halts the queue until the account is reconnected. On HTTP 429 (per-minute
-quota) the queue additionally pauses new item starts for a minute so one quota
-window cannot burn the retry budget of every queued item.
+Uploads follow the iOS app's exact scheduling technique: oldest-first, SHA-1
+hash dedup against Google's side before any bytes move, resumable upload
+sessions, and the upstream retry schedule (`min(30, 2^attempt)`, 3 attempts).
+As of upstream 0.3.4, a manual **Back up now** queues the whole selection —
+the 250-item batch cap is an automatic-pass technique only, so the desktop port
+paces quota at the request level instead: HTTP 429 pauses new item starts for
+a minute. **Simultaneous uploads** is configurable from 1 to 10 (upstream
+0.3.2; default 2).
+
+Error handling matches upstream 0.3.5: Google's `google.rpc.Status` protobuf
+is decoded, so failures name their canonical code and a readable message
+instead of a hex dump. `RESOURCE_EXHAUSTED` without HTTP 429 means the account
+is out of storage — non-retryable, and the queue halts until space is freed.
+A rejected credential halts the queue the same way. Upload receipts are
+validated (field 2 must carry the upload token); a commit that rejects the
+receipt (`INVALID_ARGUMENT`) re-runs the preflight and transfer instead of
+failing the item. Each run first requeues any previously failed items whose
+errors were transient.
 
 Two toggles mirror the iOS app's Settings → Backup, with the same defaults:
 **Storage Saver** (off) and **Count against storage quota** (off — uploads go
 up as Pixel XL originals that do not consume your Google storage).
+**Re-check backups** (upstream "Verify Backup") forgets the local completed
+record and re-queues everything; the Google-side hash lookup reports files
+still present as "already backed up" and re-uploads anything missing.
 
 ## Requirements
 
@@ -54,7 +67,8 @@ If npm blocks Electron's postinstall binary download, allow it and reinstall, or
 ```bash
 node test/upload-flow-test.js        # full upload pipeline against a mock Google server
 node test/stream-upload-test.js      # backpressured streaming PUT + stall watchdog
-node test/queue-test.js              # batches, backoff, 429 cooldown, credential halt
+node test/queue-test.js              # backoff, 429 cooldown, halts, releases, concurrency
+node test/status-test.js             # google.rpc.Status parsing, storageFull, receipts
 npx electron test/signin-smoke.js    # real EmbeddedSetup page: sign-in form vs. "not secure" block
 SMOKE_DEVTOOLS=1 npx electron test/signin-smoke.js   # same, with devtools attached
 ```
