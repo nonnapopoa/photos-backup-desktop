@@ -32,13 +32,13 @@ jobs:
           node test/queue-test.js
           node test/status-test.js
 
-      # Unsigned build: no Developer ID identity is configured. Both
+      # Ad-hoc signed via build/afterPack.js: no Developer ID certificate is
+      # needed, and Gatekeeper shows the normal "unidentified developer"
+      # prompt instead of reporting a quarantined app as damaged. Both
       # architectures build in one invocation on the arm64 runner; the x64
       # Electron dist is downloaded and packaged cross-arch.
       - name: Build DMGs (arm64 + x64)
         run: npx electron-builder --mac dmg --arm64 --x64 --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload DMG artifacts
         uses: actions/upload-artifact@v4

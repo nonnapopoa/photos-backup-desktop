@@ -100,6 +100,24 @@ npm run dist       # DMG (mac), NSIS (win), AppImage (linux) into release/
 npm run pack       # unpacked app only, faster
 ```
 
+Pushing a `v*` tag builds both macOS DMGs on GitHub Actions and attaches them
+to a release for that tag.
+
+### "Photos Backup.app is damaged and can't be opened"
+
+That is Gatekeeper's message for a **quarantined unsigned app** — the app is
+not actually damaged. The CI builds are ad-hoc signed, so the usual prompt is
+the milder "unidentified developer" one (right-click → Open). If you still see
+"damaged" (for example after an OS upgrade re-evaluates old downloads), clear
+the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Photos Backup.app"
+```
+
+A Developer ID certificate plus notarization would remove the prompts
+entirely, but needs a paid Apple Developer account.
+
 ## Use
 
 1. **Connect Google Account** — a private sign-in window opens. Sign in and accept
