@@ -46,7 +46,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 28px;
+  /* Same side insets as the main container (width: min(880px, 100% - 40px)),
+     so the logo and the account badge sit flush with the body content. */
+  padding: 18px max(20px, calc((100% - 880px) / 2));
 }
 
 .brand { display: flex; align-items: center; gap: 14px; }
