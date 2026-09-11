@@ -33,7 +33,7 @@
 
 body {
   margin: 0;
-  min-width: 1040px; /* matches the window's fixed content width in main.js */
+  min-width: 960px; /* matches the window's fixed content width in main.js */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   background: var(--bg);
   color: var(--text);

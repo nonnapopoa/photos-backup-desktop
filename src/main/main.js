@@ -69,14 +69,14 @@ function createWindow() {
   // flashes white before the first paint — including in dark mode.
   const backgroundColor = nativeTheme.shouldUseDarkColors ? '#16181c' : '#f5f6f8';
   mainWindow = new BrowserWindow({
-    width: 1040,
+    width: 960,
     height: 720,
     // Sizes refer to the page content, not the window frame. Width is fixed:
-    // minWidth === maxWidth pins it at 1040 while the height stays resizable.
+    // minWidth === maxWidth pins it at 960 while the height stays resizable.
     // Fullscreen is disabled because it would bypass the width constraint.
     useContentSize: true,
-    minWidth: 1040,
-    maxWidth: 1040,
+    minWidth: 960,
+    maxWidth: 960,
     minHeight: 560,
     fullscreenable: false,
     title: 'Photos Backup',
