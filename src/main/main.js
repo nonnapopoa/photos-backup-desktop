@@ -71,14 +71,16 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 960,
     height: 720,
-    // Sizes refer to the page content, not the window frame. Width is fixed:
-    // minWidth === maxWidth pins it at 960 while the height stays resizable.
-    // Fullscreen is disabled because it would bypass the width constraint.
+    // Fixed size: sizes refer to the page content, width and height are both
+    // pinned (min === max), resizing, maximizing and fullscreen are disabled.
     useContentSize: true,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
     minWidth: 960,
     maxWidth: 960,
-    minHeight: 560,
-    fullscreenable: false,
+    minHeight: 720,
+    maxHeight: 720,
     title: 'Photos Backup',
     autoHideMenuBar: true,
     show: false,
