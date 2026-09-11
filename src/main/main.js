@@ -71,6 +71,10 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1040,
     height: 720,
+    // Size and minimums refer to the page content, not the window frame, so
+    // minWidth (860) means exactly the body's CSS min-width — the body can
+    // never be squeezed below the layout's design width.
+    useContentSize: true,
     minWidth: 860,
     minHeight: 560,
     title: 'Photos Backup',
