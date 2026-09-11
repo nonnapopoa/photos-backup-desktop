@@ -71,12 +71,14 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1040,
     height: 720,
-    // Size and minimums refer to the page content, not the window frame, so
-    // minWidth (860) means exactly the body's CSS min-width — the body can
-    // never be squeezed below the layout's design width.
+    // Sizes refer to the page content, not the window frame. Width is fixed:
+    // minWidth === maxWidth pins it at 1040 while the height stays resizable.
+    // Fullscreen is disabled because it would bypass the width constraint.
     useContentSize: true,
-    minWidth: 860,
+    minWidth: 1040,
+    maxWidth: 1040,
     minHeight: 560,
+    fullscreenable: false,
     title: 'Photos Backup',
     autoHideMenuBar: true,
     show: false,

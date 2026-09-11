@@ -61,6 +61,9 @@ function connectAccount(parentWindow) {
       autoHideMenuBar: true,
       show: false,
       backgroundColor: '#ffffff',
+      resizable: false,
+      maximizable: false,
+      fullscreenable: false,
       webPreferences: {
         session: authSession,
         // The preload patches page-visible globals, so it must share the
