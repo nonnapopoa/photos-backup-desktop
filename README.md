@@ -118,6 +118,19 @@ xattr -dr com.apple.quarantine "/Applications/Photos Backup.app"
 A Developer ID certificate plus notarization would remove the prompts
 entirely, but needs a paid Apple Developer account.
 
+### "Photos Backup wants to use your confidential information stored in 'Photos Backup Safe Storage' in your keychain"
+
+Expected, and safe to approve. The saved Google credential is encrypted at
+rest with Electron `safeStorage`, whose encryption key lives in your login
+Keychain under that name. The prompt is macOS asking whether this build may
+read that key — click **Always Allow**. It can reappear after each new DMG
+install because ad-hoc signatures change with every build (a stable Developer
+ID signature would be granted silently). Clicking **Deny** is also safe: the
+app falls back to storing the credential unencrypted under its own userData
+directory with `0600` permissions. The dev build (`npm start`) prompts
+separately for the "Electron Safe Storage" item because it runs the raw
+Electron binary.
+
 ## Use
 
 1. **Connect Google Account** — a private sign-in window opens. Sign in and accept
