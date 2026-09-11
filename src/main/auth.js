@@ -59,6 +59,8 @@ function connectAccount(parentWindow) {
       height: 780,
       title: 'Connect Google Account',
       autoHideMenuBar: true,
+      show: false,
+      backgroundColor: '#ffffff',
       webPreferences: {
         session: authSession,
         // The preload patches page-visible globals, so it must share the
@@ -70,6 +72,8 @@ function connectAccount(parentWindow) {
       },
     });
     win.setMenuBarVisibility(false);
+    // Show once painted; no blank frame while navigation starts.
+    win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
 
     let settled = false;
     const finish = (fn, value) => {

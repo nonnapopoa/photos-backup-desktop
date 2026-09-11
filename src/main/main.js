@@ -3,7 +3,7 @@
 // Main process: window lifecycle, account state machine, and the IPC surface
 // the renderer talks to. Mirrors PhotosBackupApp.swift's composition root.
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
 const path = require('path');
 const { connectAccount } = require('./auth');
 const { CredentialStore } = require('./credentialStore');
@@ -65,6 +65,9 @@ async function runBackup({ recheck = false } = {}) {
 }
 
 function createWindow() {
+  // Match the renderer's CSS background (styles.css) so the window never
+  // flashes white before the first paint — including in dark mode.
+  const backgroundColor = nativeTheme.shouldUseDarkColors ? '#16181c' : '#f5f6f8';
   mainWindow = new BrowserWindow({
     width: 1040,
     height: 720,
@@ -72,6 +75,8 @@ function createWindow() {
     minHeight: 560,
     title: 'Photos Backup',
     autoHideMenuBar: true,
+    show: false,
+    backgroundColor,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -80,6 +85,8 @@ function createWindow() {
     },
   });
   mainWindow.setMenuBarVisibility(false);
+  // Show only once the renderer has painted: no white flash on startup.
+  mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
 
