@@ -1,0 +1,90 @@
+name: Build Desktop Apps
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ad-hoc signed via build/afterPack.js: no Developer ID certificate
+          # is needed, and Gatekeeper shows the normal "unidentified
+          # developer" prompt instead of reporting a quarantined app as
+          # damaged. Both architectures build in one invocation on the arm64
+          # runner; the x64 Electron dist is downloaded and packaged
+          # cross-arch.
+          - name: macOS DMGs (arm64 + x64)
+            os: macos-latest
+            build-args: --mac dmg --arm64 --x64
+            artifact: dmg-macos
+            artifact-path: release/*.dmg
+          - name: Windows installer (x64)
+            os: windows-latest
+            build-args: --win nsis --x64
+            artifact: installer-windows
+            artifact-path: release/*.exe
+          - name: Linux AppImage (x64)
+            os: ubuntu-latest
+            build-args: --linux AppImage --x64
+            artifact: appimage-linux
+            artifact-path: release/*.AppImage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run protocol and queue tests
+        run: |
+          node test/upload-flow-test.js
+          node test/stream-upload-test.js
+          node test/queue-test.js
+          node test/status-test.js
+
+      - name: Build
+        run: npx electron-builder ${{ matrix.build-args }} --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+
+  release:
+    name: Attach to release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only tag pushes create a release; manual dispatch just builds artifacts.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release and upload artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
