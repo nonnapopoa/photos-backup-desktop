@@ -34,8 +34,12 @@ jobs:
             build-args: --win nsis --x64
             artifact: installer-windows
             artifact-path: release/*.exe
+          # Pinned rather than ubuntu-latest: the label flips to Ubuntu 26 on
+          # 2026-10-19 (actions/runner-images#14748), and there is nothing in
+          # this build that needs it — npm, electron-builder and the tests run
+          # the same on 24.04.
           - name: Linux AppImage (x64)
-            os: ubuntu-latest
+            os: ubuntu-24.04
             build-args: --linux AppImage --x64
             artifact: appimage-linux
             artifact-path: release/*.AppImage
