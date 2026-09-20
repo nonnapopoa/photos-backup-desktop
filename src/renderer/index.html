@@ -68,6 +68,13 @@
             </label>
           </div>
         </div>
+        <p class="fineprint" id="qualityNote">
+          Storage Saver asks Google Photos to reduce file size. With Count against
+          storage quota off, uploads identify as an older Pixel phone so they don't
+          use your Google storage; the Google Photos app may then label them
+          “Storage saver” even though the original file was kept. The file size, or
+          Google Photos on the web, shows the real quality.
+        </p>
         <div class="actions">
           <button id="backupButton" class="primary">Back up now</button>
           <button id="recheckButton" class="secondary">Re-check backups</button>
@@ -77,6 +84,19 @@
         </div>
         <div id="summary" class="summary"></div>
         <div id="scanNote" class="muted hidden"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Support</h2>
+          <button id="copyDiagnosticsButton" class="secondary">Copy Diagnostic Report</button>
+        </div>
+        <p class="fineprint">
+          A redacted summary of this app's decisions, queue, and event timeline —
+          credentials, addresses, filenames, and URLs are excluded. Nothing is
+          sent anywhere; the report is copied to your clipboard to paste wherever
+          you like.
+        </p>
       </div>
 
       <div class="card uploads-card">

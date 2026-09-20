@@ -56,6 +56,8 @@ jobs:
           node test/stream-upload-test.js
           node test/queue-test.js
           node test/status-test.js
+          node test/diagnostics-test.js
+          node test/preparation-guard-test.js
 
       - name: Build
         run: npx electron-builder ${{ matrix.build-args }} --publish never

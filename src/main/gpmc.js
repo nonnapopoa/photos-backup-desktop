@@ -256,6 +256,20 @@ class GPMCClient {
 
   get accountEmail() { return this.values.Email || ''; }
 
+  // The device model and quality code a commit declares, the same mapping
+  // upstream gpmc uses (upstream 0.3.6). The model decides how Google accounts
+  // for the upload's storage — an older Pixel's uploads do not count against
+  // it — and the quality code asks for original bytes (3) or Storage Saver
+  // (1). The Google Photos app labels an upload from the free-storage models
+  // "Storage saver" even when the original bytes were kept; exposed so the
+  // diagnostic report shows exactly what was sent.
+  static commitProfile(useQuota, saver) {
+    return {
+      model: useQuota ? 'Pixel 8' : (saver ? 'Pixel 2' : 'Pixel XL'),
+      quality: saver ? 1 : 3,
+    };
+  }
+
   async authenticate() {
     let response;
     try {
@@ -426,7 +440,7 @@ class GPMCClient {
       intField(10, 1),
     ]);
     const device = Buffer.concat([
-      stringField(3, useQuota ? 'Pixel 8' : (saver ? 'Pixel 2' : 'Pixel XL')),
+      stringField(3, GPMCClient.commitProfile(useQuota, saver).model),
       stringField(4, 'Google'),
       intField(5, 28),
     ]);

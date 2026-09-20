@@ -3,7 +3,7 @@
 // Main process: window lifecycle, account state machine, and the IPC surface
 // the renderer talks to. Mirrors PhotosBackupApp.swift's composition root.
 
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, clipboard } = require('electron');
 const path = require('path');
 const { connectAccount } = require('./auth');
 const { CredentialStore } = require('./credentialStore');
@@ -12,6 +12,7 @@ const { scanFolders } = require('./mediaScanner');
 const { UploadQueue, clampConcurrency } = require('./uploadQueue');
 const TokenExchange = require('./tokenExchange');
 const { GPMCClient, GPMCError } = require('./gpmc');
+const { eventLog, buildReport } = require('./diagnostics');
 
 let mainWindow = null;
 let queue = null;
@@ -60,6 +61,7 @@ async function runBackup({ recheck = false } = {}) {
   send('scan-started', {});
   const found = await scanFolders(folders);
   send('scan-finished', { count: found.length });
+  eventLog().record('queue', `Scanned the configured folders: ${found.length} media file${found.length === 1 ? '' : 's'} found`);
   const { queued } = await queue.enqueueScan(found);
   return { found: found.length, queued, released, recheck };
 }
@@ -101,6 +103,7 @@ function createWindow() {
   // Restore any saved account, then validate quietly in the background.
   const stored = credentials.load();
   if (stored) {
+    eventLog().record('account', 'Restored the saved Google account; checking it in the background');
     startQueue(stored);
     validateCredential(stored)
       .then(() => emitState())
@@ -109,6 +112,7 @@ function createWindow() {
         // same as a revoked token at this layer, and destroying a good
         // credential forces an unnecessary re-login. Warn instead; the user
         // can disconnect explicitly.
+        eventLog().record('account', `The first read-only check after launch failed: ${error.message}`, 'warning');
         send('account-warning', error instanceof GPMCError
           ? `${error.message} The saved account is kept — if it keeps failing, disconnect and connect again.`
           : 'The saved credential could not be validated; uploads will retry automatically.');
@@ -127,15 +131,18 @@ function registerIpc() {
     try {
       oauthToken = await connectAccount(mainWindow);
     } catch (error) {
+      eventLog().record('account', `Sign-in did not complete: ${error.message}`, 'error');
       return { error: error.message };
     }
     let result;
     try {
       result = await TokenExchange.run(oauthToken);
     } catch (error) {
+      eventLog().record('account', `Sign-in failed during the token exchange: ${error.message}`, 'error');
       return { error: `Token exchange failed — ${error.message}` };
     }
     if (result.encrypted) {
+      eventLog().record('account', 'Sign-in returned a device-bound token, which this app cannot use', 'error');
       return { error: 'Google issued a bound (encrypted) token. This build cannot use it; connect an account whose token is unbound.' };
     }
     const credential = {
@@ -160,9 +167,11 @@ function registerIpc() {
     try {
       await validateCredential(credential);
     } catch (error) {
+      eventLog().record('account', `The first read-only check after sign-in failed: ${error.message}`, 'warning');
       emitState();
       return { warning: `Connected as ${result.email}, but validation failed: ${error.message}` };
     }
+    eventLog().record('account', 'Sign-in completed and the Google token was exchanged');
     emitState();
     return persisted
       ? { email: result.email }
@@ -173,8 +182,23 @@ function registerIpc() {
     queue?.cancelAll();
     queue = null;
     credentials.clear();
+    eventLog().record('account', 'The Google account was disconnected');
     emitState();
     return { ok: true };
+  });
+
+  // Support (upstream 0.3.6): the report is redacted on the way in, so it can
+  // go straight to the clipboard.
+  ipcMain.handle('copy-diagnostics', () => {
+    const { text, findings } = buildReport({
+      version: app.getVersion(),
+      queue,
+      settings,
+      log: eventLog(),
+    });
+    eventLog().record('support', 'Created a diagnostic report');
+    clipboard.writeText(text);
+    return { ok: true, findings };
   });
 
   ipcMain.handle('select-folders', async () => {
@@ -224,11 +248,20 @@ function registerIpc() {
 }
 
 app.whenReady().then(() => {
+  eventLog().record('app', `Photos Backup launched (version ${app.getVersion()})`);
   registerIpc();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+// A quit the app participated in is not a crash: drop the preparation markers
+// so files in flight are not counted against the crash-loop guard next
+// launch, and write the diagnostic log out synchronously.
+app.on('will-quit', () => {
+  queue?.clearPreparationMarkers();
+  eventLog().flush();
 });
 
 app.on('window-all-closed', () => {

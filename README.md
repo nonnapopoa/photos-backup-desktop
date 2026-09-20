@@ -19,6 +19,8 @@ the iOS Photos library replaced by folders you choose.
 | Keychain credential (`CredentialStore.swift`) | Electron `safeStorage`-encrypted file under userData |
 | PHPhotoLibrary albums + PHPicker | Folder picker + recursive media scan (`src/main/mediaScanner.js`) |
 | BGProcessingTask background windows | Desktop queue with pause/resume/cancel and per-account skip memory |
+| Diagnostic event log + report (`DiagnosticEventLog.swift`, `DiagnosticReport.swift`) | `src/main/diagnostics.js` — Support → Copy Diagnostic Report |
+| Crash-loop guard (`PreparationMarkerStoring`, upstream #13) | `src/main/preparationGuard.js` + the upload queue |
 | SwiftUI views | Plain HTML/CSS/JS renderer |
 
 Uploads follow the iOS app's exact scheduling technique: oldest-first, SHA-1
@@ -47,6 +49,30 @@ up as Pixel XL originals that do not consume your Google storage).
 record and re-queues everything; the Google-side hash lookup reports files
 still present as "already backed up" and re-uploads anything missing.
 
+Also ported from upstream 0.3.6:
+
+- **Diagnostic report.** Every backup decision leaves a plain-language event
+  (sign-in steps, scans, queues, retries with the stage that failed, halts,
+  quota cooldowns) in a durable, size-capped log — repeats fold, and routine
+  entries are dropped before warnings and errors. **Support → Copy Diagnostic
+  Report** puts a redacted summary (configuration, queue state, "What stands
+  out" findings, event timeline) on the clipboard. Credentials, addresses,
+  filenames, and URLs never make it into the report.
+- **Crash-loop guard.** A file being prepared is marked on disk; if the app
+  dies while preparing it, the file moves to the back of the queue, and a file
+  that has stopped the app twice is skipped as non-retryable — so one poison
+  file cannot stop every run from backing up the rest. **Retry failed** gives
+  it a fresh allowance. A graceful quit clears the markers; only a real crash
+  counts.
+- The Settings explanation of why free-quota uploads may show a
+  "Storage saver" label in Google Photos (upstream #11), and the commit's
+  device model / quality code now comes from one source of truth
+  (`GPMCClient.commitProfile`).
+
+Not ported from 0.3.6, as iOS-only: Shortcuts automation, MetricKit crash
+collection, background-execution windows and their run history, and the
+staging-storage cleanup screen.
+
 ## Requirements
 
 - Node.js 18+ (tested on 26)
@@ -69,6 +95,8 @@ node test/upload-flow-test.js        # full upload pipeline against a mock Googl
 node test/stream-upload-test.js      # backpressured streaming PUT + stall watchdog
 node test/queue-test.js              # backoff, 429 cooldown, halts, releases, concurrency
 node test/status-test.js             # google.rpc.Status parsing, storageFull, receipts
+node test/diagnostics-test.js        # redaction, event folding/trim, report contents
+node test/preparation-guard-test.js  # crash-loop guard: move-back, skip, retry reset
 npx electron test/signin-smoke.js    # real EmbeddedSetup page: sign-in form vs. "not secure" block
 SMOKE_DEVTOOLS=1 npx electron test/signin-smoke.js   # same, with devtools attached
 ```

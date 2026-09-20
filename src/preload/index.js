@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('photosBackup', {
   resume: () => ipcRenderer.invoke('queue-resume'),
   cancelAll: () => ipcRenderer.invoke('queue-cancel'),
   retryFailed: () => ipcRenderer.invoke('queue-retry-failed'),
+  copyDiagnostics: () => ipcRenderer.invoke('copy-diagnostics'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   on: (channel, listener) => {
     const allowed = ['account-state', 'settings', 'queue-snapshot', 'scan-started', 'scan-finished', 'account-warning'];

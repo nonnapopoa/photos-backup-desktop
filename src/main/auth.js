@@ -142,6 +142,10 @@ function connectAccount(parentWindow) {
         if (attemptsLeft > 0 && isErrFailed(error)) {
           settled = true;
           teardown();
+          try {
+            require('./diagnostics').eventLog()
+              .record('account', `The sign-in page failed to load (${error.message}); retrying once`, 'warning');
+          } catch { /* logging must never break sign-in */ }
           attempt();
           return;
         }

@@ -26,6 +26,7 @@ const els = {
   uploadList: document.getElementById('uploadList'),
   emptyQueue: document.getElementById('emptyQueue'),
   disconnectButton: document.getElementById('disconnectButton'),
+  copyDiagnosticsButton: document.getElementById('copyDiagnosticsButton'),
   filters: [...document.querySelectorAll('.filter')],
 };
 
@@ -297,6 +298,17 @@ els.retryButton.onclick = () => window.photosBackup.retryFailed();
 els.disconnectButton.onclick = async () => {
   await window.photosBackup.disconnectAccount();
   state.snapshot = null;
+};
+
+els.copyDiagnosticsButton.onclick = async () => {
+  els.copyDiagnosticsButton.disabled = true;
+  const result = await window.photosBackup.copyDiagnostics();
+  els.copyDiagnosticsButton.disabled = false;
+  if (result?.ok) {
+    showNote(result.findings && result.findings.length && result.findings[0] !== 'Nothing unusual was detected.'
+      ? `Diagnostic report copied. Worth checking: ${result.findings[0]}`
+      : 'Diagnostic report copied to the clipboard.', true);
+  }
 };
 
 els.storageSaverToggle.onchange = async () => {
