@@ -53,6 +53,7 @@ app.whenReady().then(async () => {
       uaData: String(navigator.userAgentData),
       chrome: String(window.chrome),
       vendor: navigator.vendor,
+      node: [typeof process, typeof Buffer, typeof require].join('/'),
       title: document.title,
       bodyLength: text.length,
       snippet: text.split('\\n').filter(Boolean).slice(0, 3).join(' | '),
@@ -67,13 +68,13 @@ app.whenReady().then(async () => {
     console.log(`  ${state.readyState} ${state.href.slice(0, 80)} body=${state.bodyLength} "${state.snippet.slice(0, 70)}"`);
 
     if (state.blocked) {
-      console.log(`SMOKE: BLOCKED — ua=${state.ua} uaData=${state.uaData} chrome=${state.chrome} vendor=${state.vendor}`);
+      console.log(`SMOKE: BLOCKED — ua=${state.ua} uaData=${state.uaData} chrome=${state.chrome} vendor=${state.vendor} node=${state.node}`);
       app.exit(2);
       return;
     }
     if (state.hasEmailField) {
       console.log(`SMOKE: SIGN-IN-FORM-REACHED (title: ${state.title})`);
-      console.log(`SMOKE: fingerprint: uaData=${state.uaData} chrome=${state.chrome} vendor=${state.vendor}`);
+      console.log(`SMOKE: fingerprint: uaData=${state.uaData} chrome=${state.chrome} vendor=${state.vendor} node=${state.node}`);
       app.exit(0);
       return;
     }
