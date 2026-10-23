@@ -8,7 +8,7 @@ const path = require('path');
 const { connectAccount } = require('./auth');
 const { CredentialStore } = require('./credentialStore');
 const { Settings } = require('./settings');
-const { scanFolders } = require('./mediaScanner');
+const { scanFolders, inspectPaths, MEDIA_EXTENSIONS } = require('./mediaScanner');
 const { UploadQueue, clampConcurrency } = require('./uploadQueue');
 const TokenExchange = require('./tokenExchange');
 const { GPMCClient, GPMCError } = require('./gpmc');
@@ -64,6 +64,25 @@ async function runBackup({ recheck = false } = {}) {
   eventLog().record('queue', `Scanned the configured folders: ${found.length} media file${found.length === 1 ? '' : 's'} found`);
   const { queued } = await queue.enqueueScan(found);
   return { found: found.length, queued, released, recheck };
+}
+
+// Add folders to the backup list; returns how many were new.
+function addFolders(paths) {
+  const current = settings.get('folders') || [];
+  const merged = [...new Set([...current, ...paths])];
+  settings.update({ folders: merged });
+  emitState();
+  return merged.length - current.length;
+}
+
+// Queue files the user picked or dropped for a one-off upload, the desktop
+// take on choosing photos in the iOS app. They are not folders being backed
+// up, so they never go into folder albums.
+async function uploadFiles(files) {
+  if (!queue) return { error: 'not-connected' };
+  const { queued } = await queue.enqueueScan(files.map((file) => ({ ...file, skipAlbum: true })));
+  eventLog().record('queue', `You chose ${files.length} file${files.length === 1 ? '' : 's'} to upload`);
+  return { queued, alreadyDone: files.length - queued };
 }
 
 function createWindow() {
@@ -207,11 +226,31 @@ function registerIpc() {
       properties: ['openDirectory', 'multiSelections', 'createDirectory'],
     });
     if (picked.canceled || !picked.filePaths.length) return { folders: settings.get('folders') };
-    const current = settings.get('folders') || [];
-    const merged = [...new Set([...current, ...picked.filePaths])];
-    settings.update({ folders: merged });
-    emitState();
-    return { folders: merged };
+    addFolders(picked.filePaths);
+    return { folders: settings.get('folders') };
+  });
+
+  ipcMain.handle('select-files', async () => {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose photos and videos to upload',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Photos and videos', extensions: MEDIA_EXTENSIONS }],
+    });
+    if (picked.canceled || !picked.filePaths.length) return { canceled: true };
+    const { files, skipped } = await inspectPaths(picked.filePaths);
+    if (!files.length) return { queued: 0, alreadyDone: 0, skipped };
+    return { ...(await uploadFiles(files)), skipped };
+  });
+
+  // Drag and drop: dropped folders join the backup list, dropped photos and
+  // videos upload once. Paths come from the renderer, so they are checked
+  // again here rather than trusted.
+  ipcMain.handle('add-paths', async (_event, paths) => {
+    if (!Array.isArray(paths)) return { error: 'invalid' };
+    const { folders, files, skipped } = await inspectPaths(paths.slice(0, 10000));
+    const result = { foldersAdded: folders.length ? addFolders(folders) : 0, queued: 0, alreadyDone: 0, skipped };
+    if (files.length) Object.assign(result, await uploadFiles(files));
+    return result;
   });
 
   ipcMain.handle('remove-folder', (_event, folder) => {
@@ -223,7 +262,7 @@ function registerIpc() {
 
   ipcMain.handle('update-settings', (_event, patch) => {
     const allowed = {};
-    for (const key of ['storageSaver', 'useQuota', 'autoStart']) {
+    for (const key of ['storageSaver', 'useQuota', 'dateFromFilename', 'albumsFromFolders', 'autoStart']) {
       if (key in patch) allowed[key] = !!patch[key];
     }
     if ('concurrency' in patch) allowed.concurrency = clampConcurrency(patch.concurrency);

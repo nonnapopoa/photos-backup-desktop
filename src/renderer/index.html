@@ -47,10 +47,19 @@
       <div class="card">
         <div class="card-head">
           <h2>Folders</h2>
-          <button id="addFolderButton" class="secondary">Add Folder…</button>
+          <div class="head-actions">
+            <button id="uploadPhotosButton" class="secondary">Upload Photos…</button>
+            <button id="addFolderButton" class="secondary">Add Folder…</button>
+          </div>
         </div>
         <ul id="folderList" class="folder-list"></ul>
         <p id="noFolders" class="muted">No folders chosen yet — add one to begin.</p>
+        <label class="toggle folder-option"><input type="checkbox" id="albumsFromFoldersToggle"> Create an album for each folder</label>
+        <p class="fineprint">
+          Drag folders or photos anywhere onto this window. Folders join the list
+          above; photos and videos upload right away. Albums are named after the
+          folder each file is in. Photos you upload on their own don't go into an album.
+        </p>
       </div>
 
       <div class="card">
@@ -59,6 +68,7 @@
           <div class="toggles">
             <label class="toggle"><input type="checkbox" id="storageSaverToggle"> Storage Saver</label>
             <label class="toggle"><input type="checkbox" id="useQuotaToggle"> Count against storage quota</label>
+            <label class="toggle"><input type="checkbox" id="dateFromFilenameToggle"> Date from filename</label>
             <label class="toggle">Simultaneous uploads
               <select id="concurrencySelect" class="concurrency">
                 <option>1</option><option>2</option><option>3</option><option>4</option>
@@ -74,6 +84,8 @@
           use your Google storage; the Google Photos app may then label them
           “Storage saver” even though the original file was kept. The file size, or
           Google Photos on the web, shows the real quality.
+          Date from filename dates a file by a date in its name, such as
+          IMG_20240709_182027.jpg, when the file has no date of its own inside it.
         </p>
         <div class="actions">
           <button id="backupButton" class="primary">Back up now</button>
@@ -110,10 +122,14 @@
           </div>
         </div>
         <ul id="uploadList" class="upload-list"></ul>
-        <p id="emptyQueue" class="muted">Nothing queued. Press “Back up now” to scan your folders.</p>
+        <p id="emptyQueue" class="muted">Nothing queued. Press “Back up now” to scan your folders, or upload photos.</p>
       </div>
     </section>
   </main>
+
+  <div id="dropOverlay" class="drop-overlay hidden" aria-hidden="true">
+    <div class="drop-target">Drop photos, videos, or folders</div>
+  </div>
 
   <footer>
     <button id="disconnectButton" class="danger hidden">Disconnect account</button>

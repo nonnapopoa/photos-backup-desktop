@@ -19,6 +19,13 @@ const DEFAULT_SETTINGS = {
   // Simultaneous uploads, 1–10 (upstream 0.3.2).
   concurrency: 2,
   autoStart: true,
+  // File each upload into an album named after its parent folder (the
+  // gotohp AUTO album mode, applied per file).
+  albumsFromFolders: true,
+  // Date uploads from their filename (IMG_20240709_182027.jpg) before falling
+  // back to the modification time. Google still prefers a date embedded in
+  // the file; this only decides the date for files without one.
+  dateFromFilename: true,
 };
 
 function migrate(data) {
@@ -34,9 +41,19 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+function accountSlug(email) {
+  return crypto.createHash('sha256').update(email || 'unknown').digest('hex').slice(0, 16);
+}
+
 function completedPath(email) {
-  const slug = crypto.createHash('sha256').update(email || 'unknown').digest('hex').slice(0, 16);
-  return path.join(app.getPath('userData'), `completed-${slug}.json`);
+  return path.join(app.getPath('userData'), `completed-${accountSlug(email)}.json`);
+}
+
+// Album names -> album media keys this app created for the account. Google's
+// private API offers no album lookup, so this record is how an existing
+// album is found again.
+function albumsPath(email) {
+  return path.join(app.getPath('userData'), `albums-${accountSlug(email)}.json`);
 }
 
 function signature(item) {
@@ -84,6 +101,26 @@ class Settings {
   // really in the cloud, so this only costs one hash + one RPC per file.
   clearCompleted(email) {
     try { fs.unlinkSync(completedPath(email)); } catch { /* ignore */ }
+  }
+
+  loadAlbums(email) {
+    try {
+      return new Map(Object.entries(JSON.parse(fs.readFileSync(albumsPath(email), 'utf8')).albums || {}));
+    } catch {
+      return new Map();
+    }
+  }
+
+  albumKey(email, name) {
+    return this.loadAlbums(email).get(name) || null;
+  }
+
+  // Pass a null key to forget an album (deleted in Google Photos, say).
+  saveAlbum(email, name, key) {
+    if (!email) return;
+    const albums = this.loadAlbums(email);
+    if (key) albums.set(name, key); else albums.delete(name);
+    fs.writeFileSync(albumsPath(email), JSON.stringify({ albums: Object.fromEntries(albums) }, null, 2));
   }
 }
 
