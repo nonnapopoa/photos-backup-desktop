@@ -240,6 +240,11 @@ async function streamUpload(url, filePath, headers, onProgress, signal, { idleTi
 class GPMCClient {
   static HASH_CHECK_METHOD = '5084965799730810217';
   static COMMIT_METHOD = '16538846908252377752';
+  // Album calls, ported from gotohp core/api.go (CreateAlbum, AddMediaToAlbum).
+  // Both carry EXT_HEADERS. The private API has no known album lookup, so
+  // callers keep their own name -> album key record.
+  static CREATE_ALBUM_METHOD = '8386163679468898444';
+  static ADD_TO_ALBUM_METHOD = '484917746253879292';
   // Only some photosdata-pa calls carry these; the hash lookup must NOT.
   static EXT_HEADERS = {
     'x-goog-ext-173412678-bin': 'CgcIAhClARgC',
@@ -363,15 +368,52 @@ class GPMCClient {
     return { response, body: drained };
   }
 
-  async rpc(method, body, { ext = false } = {}) {
+  async rpc(method, body, { ext = false, operation = null } = {}) {
     const url = `https://photosdata-pa.googleapis.com/6439526531001121323/${method}`;
     const headers = ext ? GPMCClient.EXT_HEADERS : {};
     const { body: payload } = await this.request(url, {
       body,
       headers,
-      operation: method === GPMCClient.COMMIT_METHOD ? 'finalization' : 'duplicate check',
+      operation: operation || (method === GPMCClient.COMMIT_METHOD ? 'finalization' : 'duplicate check'),
     });
     return payload;
+  }
+
+  // The device block album calls declare: field 3 model, 4 make, 5 Android
+  // API level — the same shape the commit sends.
+  static albumDevice(model) {
+    return Buffer.concat([stringField(3, model), stringField(4, 'Google'), intField(5, 28)]);
+  }
+
+  // Create an album holding `mediaKeys`; returns its album media key.
+  // Field layout from gotohp generated/CreateAlbum.pb.go.
+  async createAlbum(name, mediaKeys, { model = 'Pixel XL' } = {}) {
+    const body = Buffer.concat([
+      stringField(1, name),
+      intField(2, BigInt(Math.floor(Date.now() / 1000))),
+      intField(3, 1),
+      ...mediaKeys.map((key) => bytesField(4, bytesField(1, stringField(1, key)))),
+      bytesField(6, Buffer.alloc(0)),
+      bytesField(7, intField(1, 3)),
+      bytesField(8, GPMCClient.albumDevice(model)),
+    ]);
+    const response = await this.rpc(GPMCClient.CREATE_ALBUM_METHOD, body, { ext: true, operation: 'album creation' });
+    const albumKey = stringAt([1, 1], response);
+    if (!albumKey) throw new GPMCError('malformed', `Google did not return a key for the new album "${name}".`);
+    return albumKey;
+  }
+
+  // Add `mediaKeys` to an existing album.
+  // Field layout from gotohp generated/AddMediaToAlbum.pb.go.
+  async addMediaToAlbum(albumKey, mediaKeys, { model = 'Pixel XL' } = {}) {
+    const body = Buffer.concat([
+      ...mediaKeys.map((key) => stringField(1, key)),
+      stringField(2, albumKey),
+      bytesField(5, intField(1, 2)),
+      bytesField(6, GPMCClient.albumDevice(model)),
+      intField(7, BigInt(Math.floor(Date.now() / 1000))),
+    ]);
+    await this.rpc(GPMCClient.ADD_TO_ALBUM_METHOD, body, { ext: true, operation: 'adding to an album' });
   }
 
   // SHA-1 the file, ask whether Google already holds it, and otherwise

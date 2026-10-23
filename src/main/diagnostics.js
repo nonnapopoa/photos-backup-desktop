@@ -279,6 +279,8 @@ function buildReport({ version, queue, settings, log, now = Date.now() } = {}) {
   field('Simultaneous uploads', settings?.get?.('concurrency'));
   field('Storage Saver', settings?.get?.('storageSaver'));
   field('Count against quota', settings?.get?.('useQuota'));
+  field('Date from filename', settings?.get?.('dateFromFilename'));
+  field('Albums from folders', settings?.get?.('albumsFromFolders'));
   field('Commit profile', `device ${profile.model}, quality code ${profile.quality} (${settings?.get?.('storageSaver') ? 'Storage Saver' : 'original'})`);
 
   if (info) {

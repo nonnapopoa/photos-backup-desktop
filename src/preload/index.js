@@ -2,13 +2,18 @@
 
 // Preload bridge: the renderer's entire view of the main process.
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('photosBackup', {
   getState: () => ipcRenderer.invoke('get-state'),
   connectAccount: () => ipcRenderer.invoke('connect-account'),
   disconnectAccount: () => ipcRenderer.invoke('disconnect-account'),
   selectFolders: () => ipcRenderer.invoke('select-folders'),
+  selectFiles: () => ipcRenderer.invoke('select-files'),
+  addPaths: (paths) => ipcRenderer.invoke('add-paths', paths),
+  // Dropped File objects no longer carry .path; this is Electron's
+  // replacement, and it only works here in the preload.
+  pathForFile: (file) => webUtils.getPathForFile(file),
   removeFolder: (folder) => ipcRenderer.invoke('remove-folder', folder),
   updateSettings: (patch) => ipcRenderer.invoke('update-settings', patch),
   runBackup: () => ipcRenderer.invoke('run-backup'),

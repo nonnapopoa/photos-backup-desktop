@@ -79,4 +79,31 @@ async function scanFolders(folderPaths, { onProgress } = {}) {
   return unique;
 }
 
-module.exports = { scanFolders, isMediaFile };
+// Sort paths the user picked or dropped into folders and media files.
+// Anything else (documents, empty files, paths that are gone) is counted as
+// skipped. Files come back oldest-first, the same order a scan uses.
+async function inspectPaths(paths) {
+  const folders = [];
+  const files = [];
+  let skipped = 0;
+  for (const raw of paths) {
+    if (typeof raw !== 'string' || !path.isAbsolute(raw)) { skipped += 1; continue; }
+    const full = path.resolve(raw);
+    let stat;
+    try { stat = await fs.stat(full); } catch { skipped += 1; continue; }
+    if (stat.isDirectory()) {
+      folders.push(full);
+    } else if (stat.isFile() && stat.size > 0 && !isHidden(path.basename(full)) && isMediaFile(full)) {
+      files.push({ path: full, filename: path.basename(full), size: stat.size, mtimeMs: stat.mtimeMs });
+    } else {
+      skipped += 1;
+    }
+  }
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  return { folders, files, skipped };
+}
+
+// For the file picker's filter, without the leading dots.
+const MEDIA_EXTENSIONS = [...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS].map((ext) => ext.slice(1));
+
+module.exports = { scanFolders, isMediaFile, inspectPaths, MEDIA_EXTENSIONS };

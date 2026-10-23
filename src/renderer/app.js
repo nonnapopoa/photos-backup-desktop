@@ -13,6 +13,9 @@ const els = {
   folderList: document.getElementById('folderList'),
   noFolders: document.getElementById('noFolders'),
   addFolderButton: document.getElementById('addFolderButton'),
+  uploadPhotosButton: document.getElementById('uploadPhotosButton'),
+  albumsFromFoldersToggle: document.getElementById('albumsFromFoldersToggle'),
+  dropOverlay: document.getElementById('dropOverlay'),
   backupButton: document.getElementById('backupButton'),
   recheckButton: document.getElementById('recheckButton'),
   pauseButton: document.getElementById('pauseButton'),
@@ -20,6 +23,7 @@ const els = {
   retryButton: document.getElementById('retryButton'),
   storageSaverToggle: document.getElementById('storageSaverToggle'),
   useQuotaToggle: document.getElementById('useQuotaToggle'),
+  dateFromFilenameToggle: document.getElementById('dateFromFilenameToggle'),
   concurrencySelect: document.getElementById('concurrencySelect'),
   summary: document.getElementById('summary'),
   scanNote: document.getElementById('scanNote'),
@@ -32,7 +36,7 @@ const els = {
 
 const state = {
   account: { status: 'disconnected' },
-  settings: { folders: [], storageSaver: false, useQuota: false, concurrency: 2 },
+  settings: { folders: [], storageSaver: false, useQuota: false, dateFromFilename: true, albumsFromFolders: true, concurrency: 2 },
   snapshot: null,
   filter: 'all',
 };
@@ -45,12 +49,13 @@ const STATUS_LABELS = {
   preparing: 'Preparing',
   sending: 'Uploading',
   finalizing: 'Finalizing',
+  addingToAlbum: 'Adding to album',
   uploaded: 'Uploaded',
   alreadyBackedUp: 'Already in Google Photos',
   failed: 'Failed',
   cancelled: 'Cancelled',
 };
-const ACTIVE = new Set(['hashing', 'checkingDuplicate', 'preparing', 'sending', 'finalizing']);
+const ACTIVE = new Set(['hashing', 'checkingDuplicate', 'preparing', 'sending', 'finalizing', 'addingToAlbum']);
 
 function formatBytes(n) {
   if (!Number.isFinite(n) || n <= 0) return '0 B';
@@ -95,6 +100,8 @@ function render() {
 
   els.storageSaverToggle.checked = !!state.settings.storageSaver;
   els.useQuotaToggle.checked = !!state.settings.useQuota;
+  els.dateFromFilenameToggle.checked = !!state.settings.dateFromFilename;
+  els.albumsFromFoldersToggle.checked = !!state.settings.albumsFromFolders;
   els.concurrencySelect.value = String(state.settings.concurrency || 2);
 
   // Queue controls
@@ -273,6 +280,28 @@ els.addFolderButton.onclick = async () => {
   render();
 };
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// One sentence for what an upload or drop did.
+function describeAdded(result) {
+  if (result?.error) return 'Could not add them: connect an account first.';
+  const bits = [];
+  if (result.foldersAdded) bits.push(`added ${plural(result.foldersAdded, 'folder')} to back up`);
+  if (result.queued) bits.push(`queued ${plural(result.queued, 'file')} to upload`);
+  if (result.alreadyDone) bits.push(`${plural(result.alreadyDone, 'file')} already uploaded or queued`);
+  if (result.skipped) bits.push(`skipped ${plural(result.skipped, 'item')} that ${result.skipped === 1 ? "isn't a photo or video" : "aren't photos or videos"}`);
+  if (!bits.length) return 'Nothing new to add.';
+  const text = bits.join('; ');
+  return `${text[0].toUpperCase()}${text.slice(1)}.`;
+}
+
+els.uploadPhotosButton.onclick = async () => {
+  const result = await window.photosBackup.selectFiles();
+  if (result?.canceled) return;
+  showNote(describeAdded(result), true);
+  render();
+};
+
 async function runBackupFlow(recheck) {
   const result = await (recheck ? window.photosBackup.recheckBackup() : window.photosBackup.runBackup());
   if (result?.error) {
@@ -319,6 +348,14 @@ els.useQuotaToggle.onchange = async () => {
   state.settings = await window.photosBackup.updateSettings({ useQuota: els.useQuotaToggle.checked });
   render();
 };
+els.dateFromFilenameToggle.onchange = async () => {
+  state.settings = await window.photosBackup.updateSettings({ dateFromFilename: els.dateFromFilenameToggle.checked });
+  render();
+};
+els.albumsFromFoldersToggle.onchange = async () => {
+  state.settings = await window.photosBackup.updateSettings({ albumsFromFolders: els.albumsFromFoldersToggle.checked });
+  render();
+};
 els.concurrencySelect.onchange = async () => {
   state.settings = await window.photosBackup.updateSettings({ concurrency: Number(els.concurrencySelect.value) });
   render();
@@ -340,3 +377,35 @@ for (const chip of els.filters) {
   state.settings = { ...state.settings, ...initial.settings };
   render();
 })();
+
+// Drag and drop. Every drop is handled here, so a file dropped on the window
+// is never opened in place of the app. Drops only count once an account is
+// connected, since the dashboard they add to is hidden until then.
+const dragHasFiles = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+let dragDepth = 0;
+window.addEventListener('dragenter', (event) => {
+  if (!dragHasFiles(event)) return;
+  event.preventDefault();
+  dragDepth += 1;
+  if (state.account.status === 'connected') els.dropOverlay.classList.remove('hidden');
+});
+window.addEventListener('dragleave', () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) els.dropOverlay.classList.add('hidden');
+});
+window.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = state.account.status === 'connected' ? 'copy' : 'none';
+});
+window.addEventListener('drop', async (event) => {
+  event.preventDefault();
+  dragDepth = 0;
+  els.dropOverlay.classList.add('hidden');
+  if (state.account.status !== 'connected') return;
+  const paths = [...(event.dataTransfer?.files || [])]
+    .map((file) => window.photosBackup.pathForFile(file))
+    .filter(Boolean);
+  if (!paths.length) return;
+  showNote(describeAdded(await window.photosBackup.addPaths(paths)), true);
+  render();
+});

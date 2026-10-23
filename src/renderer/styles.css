@@ -156,3 +156,19 @@ footer { padding: 6px 0 26px; text-align: center; }
   margin: 0 0 16px;
 }
 .hidden { display: none !important; }
+
+.head-actions { display: flex; gap: 8px; }
+.folder-option { margin-top: 14px; }
+
+/* Shown while files are dragged over the window. */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  pointer-events: none;
+}
+.drop-target {
+  padding: 40px 64px; border-radius: 16px;
+  border: 2px dashed var(--accent); background: var(--card);
+  color: var(--text); font-size: 17px;
+}
